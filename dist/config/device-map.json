@@ -1,0 +1,27 @@
+{
+    "input": {
+        "encoderDelta": { "channel": 0, "ccStart": 0, "count": 16 },
+        "encoderButton": {
+            "channel": 1,
+            "noteStart": 0,
+            "count": 16,
+            "down": 127,
+            "up": 0
+        },
+        "sideLeft": { "channel": 3, "upper": 8, "lower": 9, "down": 127, "up": 0 },
+        "sideRight": {
+            "channel": 3,
+            "upper": 11,
+            "lower": 12,
+            "down": 127,
+            "up": 0
+        }
+    },
+    "output": {
+        "ringLevel": { "channel": 0 },
+        "rgbColor": { "channel": 1 },
+        "ledBrightness": { "channel": 2 },
+        "ringBrightness": { "channel": 2 },
+        "pulseAnimation": { "channel": 2, "value": 13 }
+    }
+}
