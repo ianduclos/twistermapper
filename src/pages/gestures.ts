@@ -6,7 +6,7 @@ Spec: /src/Architecture.md
   Record   -> Red,   anim 'pulse' (brightness ignored that burst); record timeline.
   Playback -> Green, brightness 10, anim none; loop recorded gesture.
 - Cycle on encoder button press: Standby -> Record -> Playback -> Standby (clear rec).
-- OSC out on any value change: /twister_out/slot_{a|b|c|d}/{id} {0..1 <= 5dp}
+- OSC out on any value change: /twister_out/slot_{a|b|c|d} {id} {0..1 <= 5dp}
 - OSC in (only in standby): /twister_in/slot_{x}/set/{id} {normFloat}
 */
 
@@ -103,7 +103,7 @@ export function GesturePage(): Page {
   const emitOsc = (i: EncId) => {
     if (!ctxRef) return;
     const f = toFixedN(vals[i] / 127, 5);
-    ctxRef.osc.send(`/twister_out/slot_${ctxRef.slotLabel}/${i}`, f);
+    ctxRef.osc.send(`/twister_out/slot_${ctxRef.slotLabel}`, i, f);
   };
 
   // Playback interpolation at current time
