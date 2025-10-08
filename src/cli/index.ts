@@ -55,9 +55,9 @@ const modifiers = {
 }
 
 const baseCtx: Omit<PageContext, "setDirty" | "slot" | "slotLabel"> = {
-	modifiers,
-	resolution,
-	osc: { send: (path, ...args) => osc.send(path, ...args) },
+    modifiers,
+    resolution,
+    osc: { send: (path, ...args) => osc.send(path, ...args) },
 }
 
 // Track focused slot locally so overlay can highlight it
@@ -66,8 +66,12 @@ let focusedSlot: Slot = 0
 // Overlay state
 let overlayActive = false
 let overlayLatched = false
-
-let pendingUnlock = false // set when main pressed without shift while latched
+let mainPressAt = 0
+let mainHoldTimer: NodeJS.Timeout | null = null
+let mainHoldActive = false
+let lastShortPressAt = 0
+let lastMainEdgeAt = 0
+let mainButtonDown = false
 
 // Slot colors (use your config if you prefer)
 const SLOT_COLOR: Record<Slot, number> = {
@@ -82,13 +86,32 @@ const SLOT_COLOR: Record<Slot, number> = {
 }
 
 const SLOTS_CONFIG_PATH = resolvePath(process.cwd(), "configs/slots.json")
+const SETTINGS_CONFIG_PATH = resolvePath(process.cwd(), "configs/settings.json")
 const DEFAULT_PAGE_NAME = "Basic"
 const DEFAULT_ENCODER_COLOR = 110
+const DEFAULT_BRIGHTNESS = 5
+
+type Settings = {
+	interaction: {
+		mainDoubleClickMs: number
+		mainHoldThresholdMs: number
+		debounceMs: number
+	}
+}
+
+const DEFAULT_SETTINGS: Settings = {
+	interaction: {
+		mainDoubleClickMs: 320,
+		mainHoldThresholdMs: 200,
+		debounceMs: 20,
+	},
+}
 
 type SlotDefinition = {
 	pageName: string
 	createPage: () => Page
 	hasCustomColors: boolean
+	hasCustomBrightness: boolean
 }
 
 type PageFactory = (config?: BasicPageConfig) => Page
@@ -118,11 +141,77 @@ const sanitizeEncoderColors = (raw: unknown): number[] | undefined => {
 	return out
 }
 
+const sanitizeEncoderBrightness = (raw: unknown): number[] | undefined => {
+	if (!Array.isArray(raw)) return undefined
+	const out: number[] = []
+	for (let i = 0; i < 16; i++) {
+		const val = raw[i]
+		let numeric: number
+		if (typeof val === "number" && Number.isFinite(val)) {
+			numeric = val
+		} else if (typeof val === "bigint") {
+			numeric = Number(val)
+		} else {
+			numeric = DEFAULT_BRIGHTNESS
+		}
+		out.push(clamp(Math.round(numeric), 0, 29))
+	}
+	return out
+}
+
+const loadSettings = (): Settings => {
+	let parsed: unknown
+	try {
+		const raw = readFileSync(SETTINGS_CONFIG_PATH, "utf8")
+		parsed = JSON.parse(raw)
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException)?.code
+		if (code && code !== "ENOENT") {
+			console.warn("[Settings] Failed to read configs/settings.json:", err)
+		}
+		return { ...DEFAULT_SETTINGS }
+	}
+
+	if (!isRecord(parsed)) return { ...DEFAULT_SETTINGS }
+
+	const interactionNode = isRecord(parsed.interaction)
+		? (parsed.interaction as Record<string, unknown>)
+		: {}
+
+	const cleanNumber = (value: unknown, fallback: number) => {
+		if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+			return value
+		}
+		if (typeof value === "bigint" && value > 0n) {
+			return Number(value)
+		}
+		return fallback
+	}
+
+	return {
+		interaction: {
+			mainDoubleClickMs: cleanNumber(
+				interactionNode.mainDoubleClickMs,
+				DEFAULT_SETTINGS.interaction.mainDoubleClickMs
+			),
+			mainHoldThresholdMs: cleanNumber(
+				interactionNode.mainHoldThresholdMs,
+				DEFAULT_SETTINGS.interaction.mainHoldThresholdMs
+			),
+			debounceMs: cleanNumber(
+				interactionNode.debounceMs,
+				DEFAULT_SETTINGS.interaction.debounceMs
+			),
+		},
+	}
+}
+
 const loadSlotDefinitions = (): SlotDefinition[] => {
 	const defaults = SLOT_INDICES.map<SlotDefinition>(() => ({
 		pageName: DEFAULT_PAGE_NAME,
 		createPage: () => BasicPage(),
 		hasCustomColors: false,
+		hasCustomBrightness: false,
 	}))
 
 	let parsed: unknown
@@ -156,22 +245,29 @@ const loadSlotDefinitions = (): SlotDefinition[] => {
 		}
 
 		let hasCustomColors = false
+		let hasCustomBrightness = false
 		let encoderColors: number[] | undefined
+		let encoderBrightness: number[] | undefined
 		if (pageName === "Basic") {
 			const configNode =
 				entry && isRecord(entry.config)
 					? (entry.config as Record<string, unknown>)
 					: undefined
-			if (Array.isArray(configNode?.encoderColors)) {
-				hasCustomColors = true
-			}
 			encoderColors = sanitizeEncoderColors(configNode?.encoderColors)
+			hasCustomColors = encoderColors !== undefined
+			encoderBrightness = sanitizeEncoderBrightness(configNode?.encoderBrightness)
+			hasCustomBrightness = encoderBrightness !== undefined
 		}
 
 		const createPage = () => {
 			if (pageName === "Basic") {
-				const cfg: BasicPageConfig | undefined = encoderColors
-					? { encoderColors: [...encoderColors] }
+				const cfg: BasicPageConfig | undefined = encoderColors || encoderBrightness
+					? {
+						encoderColors: encoderColors ? [...encoderColors] : undefined,
+						encoderBrightness: encoderBrightness
+							? [...encoderBrightness]
+							: undefined,
+					}
 					: undefined
 				return BasicPage(cfg)
 			}
@@ -182,6 +278,7 @@ const loadSlotDefinitions = (): SlotDefinition[] => {
 			pageName,
 			createPage,
 			hasCustomColors,
+			hasCustomBrightness,
 		})
 	}
 
@@ -201,7 +298,24 @@ const colorsSummary =
 		? `custom on ${customColorLabels.join(",")}`
 		: "default"
 
-console.log(`Slots: ${pageSummary} (colors: ${colorsSummary})`)
+const customBrightnessLabels = SLOT_INDICES.filter(
+	(slot, idx) => slotDefinitions[idx].hasCustomBrightness
+).map((slot) => slotLabel(slot))
+const brightnessSummary =
+	customBrightnessLabels.length > 0
+		? `custom on ${customBrightnessLabels.join(",")}`
+		: "default"
+
+console.log(
+	`Slots: ${pageSummary} (colors: ${colorsSummary}; brightness: ${brightnessSummary})`
+)
+
+const settings = loadSettings()
+const {
+	mainDoubleClickMs,
+	mainHoldThresholdMs,
+	debounceMs,
+} = settings.interaction
 
 const parseSlotInput = (value: unknown): Slot | undefined => {
 	if (typeof value === "number" && Number.isInteger(value)) {
@@ -256,6 +370,43 @@ function paintFocusedPage() {
 	rec.push(pm.getDesiredFocused())
 }
 
+function clearMainHoldTimer() {
+	if (mainHoldTimer) {
+		clearTimeout(mainHoldTimer)
+		mainHoldTimer = null
+	}
+}
+
+function activateOverlayMomentary() {
+	if (!overlayActive) {
+		overlayActive = true
+		paintOverlay()
+	}
+	mainHoldActive = true
+}
+
+function deactivateOverlayIfMomentary() {
+	mainHoldActive = false
+	if (!overlayLatched && overlayActive) {
+		overlayActive = false
+		paintFocusedPage()
+	}
+}
+
+function setOverlayLatch(next: boolean) {
+	if (overlayLatched === next) return
+	overlayLatched = next
+	if (overlayLatched) {
+		overlayActive = true
+		paintOverlay()
+		console.log("Main latch: ON")
+	} else {
+		overlayActive = false
+		paintFocusedPage()
+		console.log("Main latch: OFF")
+	}
+}
+
 // ---- Page manager: guard pushes while overlay is active ----
 const pm = new PageManager(baseCtx, (frame, reason) => {
 	if (overlayActive) return // overlay owns the LEDs
@@ -289,52 +440,48 @@ dec.onEvent((ev) => {
 			else modifiers.shiftRight = ev.down
 			return
 
-		case "side/global":
-			if (ev.side === "left") {
-				modifiers.globalLeft = ev.down
-				return
-			}
-
-			// Right global (overlay control)
-			modifiers.globalRight = ev.down
-
-			if (ev.down) {
-				if (modifiers.shiftRight && !overlayLatched) {
-					// LOCK overlay
-					overlayLatched = true
-					overlayActive = true
-					pendingUnlock = false
-					paintOverlay()
-				} else if (!modifiers.shiftRight) {
-					if (overlayLatched) {
-						// Prepare to UNLOCK on release
-						pendingUnlock = true
-						// keep overlayActive true; repaint not needed
-					} else if (!overlayActive) {
-						// Momentary overlay
-						overlayActive = true
-						paintOverlay()
-					}
-				}
-			} else {
-				// Button released
-				if (pendingUnlock) {
-					// UNLOCK now
-					pendingUnlock = false
-					overlayLatched = false
-					overlayActive = false
-					paintFocusedPage()
-				} else if (!overlayLatched && overlayActive) {
-					// End momentary overlay
-					overlayActive = false
-					paintFocusedPage()
-				}
-			}
+	case "side/global":
+		if (ev.side === "left") {
+			modifiers.globalLeft = ev.down
 			return
+		}
 
-		default:
-			break
-	}
+		modifiers.globalRight = ev.down
+		const now = Date.now()
+		if (now - lastMainEdgeAt < debounceMs && ev.down === mainButtonDown) return
+		lastMainEdgeAt = now
+		mainButtonDown = ev.down
+
+		if (ev.down) {
+			mainPressAt = now
+			mainHoldActive = false
+			clearMainHoldTimer()
+			mainHoldTimer = setTimeout(() => {
+				mainHoldTimer = null
+				activateOverlayMomentary()
+			}, mainHoldThresholdMs)
+			return
+		}
+
+		const pressDuration = now - mainPressAt
+		clearMainHoldTimer()
+		if (pressDuration >= mainHoldThresholdMs || mainHoldActive) {
+			deactivateOverlayIfMomentary()
+			return
+		}
+
+		if (lastShortPressAt && now - lastShortPressAt <= mainDoubleClickMs) {
+			lastShortPressAt = 0
+			setOverlayLatch(!overlayLatched)
+			return
+		}
+
+		lastShortPressAt = now
+		return
+
+	default:
+		break
+}
 
 		// While overlay is active, only handle encoder button presses 0..7
 	if (overlayActive) {

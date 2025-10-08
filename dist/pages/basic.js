@@ -12,13 +12,19 @@ Acceptance Criteria:
 */
 import { clamp, toFixedN, to127 } from "../util/scale.js";
 const DEFAULT_COLOR = 110;
+const DEFAULT_BRIGHTNESS = 5;
+const PRESSED_BRIGHTNESS = 29;
 const COLOR_MIN = 1;
 const COLOR_MAX = 126;
+const BRIGHTNESS_MIN = 0;
+const BRIGHTNESS_MAX = 29;
 export function BasicPage(config) {
     const vals = new Int16Array(16); // 0..127
     const pressed = new Array(16).fill(false);
     const colors = new Array(16).fill(DEFAULT_COLOR);
+    const baseBrightness = new Array(16).fill(DEFAULT_BRIGHTNESS);
     const initialColorSource = config?.encoderColors;
+    const initialBrightnessSource = config?.encoderBrightness;
     let dirty = true;
     const clampColor = (value) => {
         if (typeof value === "number" && Number.isFinite(value)) {
@@ -36,6 +42,27 @@ export function BasicPage(config) {
             const next = clampColor(src[i]);
             if (colors[i] !== next) {
                 colors[i] = next;
+                changed = true;
+            }
+        }
+        return changed;
+    };
+    const clampBrightness = (value) => {
+        if (typeof value === "number" && Number.isFinite(value)) {
+            return clamp(Math.round(value), BRIGHTNESS_MIN, BRIGHTNESS_MAX);
+        }
+        if (typeof value === "bigint") {
+            return clamp(Number(value), BRIGHTNESS_MIN, BRIGHTNESS_MAX);
+        }
+        return DEFAULT_BRIGHTNESS;
+    };
+    const applyEncoderBrightness = (input) => {
+        const src = Array.isArray(input) ? input : [];
+        let changed = false;
+        for (let i = 0; i < 16; i++) {
+            const next = clampBrightness(src[i]);
+            if (baseBrightness[i] !== next) {
+                baseBrightness[i] = next;
                 changed = true;
             }
         }
@@ -62,7 +89,7 @@ export function BasicPage(config) {
             out[i] = {
                 ring: to127(vals[i]),
                 rgb: colors[i],
-                ledBrightness: pressed[i] ? 10 : 5,
+                ledBrightness: pressed[i] ? PRESSED_BRIGHTNESS : baseBrightness[i],
                 ringBrightness: 31,
                 anim: "none",
             };
@@ -74,6 +101,7 @@ export function BasicPage(config) {
             for (let i = 0; i < 16; i++)
                 vals[i] = 0;
             applyEncoderColors(initialColorSource);
+            applyEncoderBrightness(initialBrightnessSource);
             dirty = true;
         },
         onFocus() {

@@ -61,6 +61,9 @@ In (core):
 
 In (page):
 • /twister*in/page*{a|b|c|d|e|f|g|h}/set <encId> <normalized> → set internal value (page decides if it’s allowed; e.g., GesturePage only in standby).
+• /twister_in/page_{slot}/config/encoderColors <16 ints> → replace BasicPage encoder palette (ignored if the slot isn’t BasicPage).
+• /twister_in/page_{slot}/config/encoderColor <encId> <color> → update a single BasicPage encoder color.
+• /twister_in/page_{slot}/dump → respond with /twister_out/page_{slot}/encoderColors (16 ints) and /twister_out/page_{slot}/allvalues (16 floats ≤5 dp).
 
 OSC numeric rules:
 • Floats emitted with max 5 decimals.
@@ -82,7 +85,7 @@ BasicPage (reference)
 • Turn: vals[id] += deltaStep → clamp 0..127.
 • LED ring mirrors value (scaled 0..127).
 • Defaults: purple (110), ledBrightness = 5 (device 23), ringBrightness = 31.
-• Press (hold): temporarily set ledBrightness = 10; release restores.
+• Press (hold): temporarily set ledBrightness = 29 (max); release restores.
 • OSC out on change: /twister_out/page_x <id> <val/127> (≤ 5 dp).
 • OSC in (optional): /twister_in/page_x/set <id> <norm>.
 
@@ -96,9 +99,9 @@ GesturePage (record / playback looper)
 ⸻
 
 Main overlay (page focus selector)
-• Invoked while holding the lower right “main” button; latch by pressing with upper right shift, release (unlatch) by pressing main again (on release).
+• Lower-right “main” button controls the overlay: hold ≥ mainHoldThresholdMs (default 200 ms) for a momentary overlay, double-click within mainDoubleClickMs (default 320 ms) to toggle latch ON/OFF, and single short taps are ignored. Debounce defaults to 20 ms.
 • Shows 8 selectors (encoders 0–7) for pages A–H with distinct colors; the focused slot is shown at full brightness. Pressing a selector focuses that page.
-• While the overlay is up, route encoder/press events to the overlay; on exit, return to normal page routing.
+• While the overlay is up, route encoder/press events to the overlay; on exit, return to normal page routing. Latch changes are logged (“Main latch: ON/OFF”).
 
 ⸻
 
@@ -132,6 +135,8 @@ Boot splash (startup warm-up)
 
 Config (JSON)
 • Color indices, channel/CC/note map, and any optional encoder index offset/map are defined in JSON.
+• configs/slots.json selects page prototypes (A–H) and optional BasicPage encoder color/brightness palettes.
+• configs/settings.json defines interaction timings (double-click window, hold threshold, debounce) for the Main overlay trigger.
 • Only the MIDI driver knows about device numbers & channels; core code works with human-readable values:
 • LED brightness: human 0..29 → device 18..47.
 • Ring brightness: human 1..31 → device 65..95.
@@ -177,7 +182,7 @@ Rules (IDs)
 Known-good behaviors to preserve
 • BasicPage: realtime OSC out on value change; press-to-brighten works; default purple color & brightness levels render correctly on first focus after boot splash.
 • GesturePage: record → playback loop wraps smoothly; end silence is recorded (final point always appended); playback ignores deltas.
-• Main overlay: momentary with latch via shift+main, release via main; selector colors/brightness show focus; switching focus repaints the new page frame using beginFocusPaint() + normal rate limits.
+• Main overlay: momentary hold or double-click latch; selector colors/brightness show focus; switching focus repaints the new page frame using beginFocusPaint() + normal rate limits.
 
 ⸻
 

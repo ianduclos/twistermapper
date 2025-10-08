@@ -4,7 +4,7 @@ Spec: /src/Architecture.md — section "BasicPage (reference page)" and "OSC"
 Acceptance Criteria:
 - Internal: 16 integer values 0..127; default 0.
 - onEvent('encoder/turn'): vals[id] += delta * (128 / ctx.resolution); clamp 0..127.
-- onEvent('encoder/press'): while down => ledBrightness=10 for that encoder; on release => restore 5.
+- onEvent('encoder/press'): while down => ledBrightness=max (29) for that encoder; on release => restore resting brightness.
 - render(): returns LedFrame if any state changed since last render; otherwise undefined.
 - OSC out: on value change, send `/twister_out/page_a {id} {normalized float <= 5 dp}` (use ctx.osc.send).
 - Optional OSC in: `/twister_in/page_a/set/{id} {normalized float}` sets value (clamped).
@@ -16,17 +16,24 @@ import { clamp, toFixedN, to127 } from "../util/scale.js"
 
 export interface BasicPageConfig {
 	encoderColors?: unknown
+	encoderBrightness?: unknown
 }
 
 const DEFAULT_COLOR = 110
+const DEFAULT_BRIGHTNESS = 5
+const PRESSED_BRIGHTNESS = 29
 const COLOR_MIN = 1
 const COLOR_MAX = 126
+const BRIGHTNESS_MIN = 0
+const BRIGHTNESS_MAX = 29
 
 export function BasicPage(config?: BasicPageConfig): Page {
 	const vals = new Int16Array(16) // 0..127
 	const pressed = new Array<boolean>(16).fill(false)
 	const colors = new Array<number>(16).fill(DEFAULT_COLOR)
+	const baseBrightness = new Array<number>(16).fill(DEFAULT_BRIGHTNESS)
 	const initialColorSource = config?.encoderColors
+	const initialBrightnessSource = config?.encoderBrightness
 	let dirty = true
 
 	const clampColor = (value: unknown): number => {
@@ -46,6 +53,29 @@ export function BasicPage(config?: BasicPageConfig): Page {
 			const next = clampColor(src[i])
 			if (colors[i] !== next) {
 				colors[i] = next
+				changed = true
+			}
+		}
+		return changed
+	}
+
+	const clampBrightness = (value: unknown): number => {
+		if (typeof value === "number" && Number.isFinite(value)) {
+			return clamp(Math.round(value), BRIGHTNESS_MIN, BRIGHTNESS_MAX)
+		}
+		if (typeof value === "bigint") {
+			return clamp(Number(value), BRIGHTNESS_MIN, BRIGHTNESS_MAX)
+		}
+		return DEFAULT_BRIGHTNESS
+	}
+
+	const applyEncoderBrightness = (input: unknown): boolean => {
+		const src = Array.isArray(input) ? input : []
+		let changed = false
+		for (let i = 0; i < 16; i++) {
+			const next = clampBrightness(src[i])
+			if (baseBrightness[i] !== next) {
+				baseBrightness[i] = next
 				changed = true
 			}
 		}
@@ -73,7 +103,7 @@ export function BasicPage(config?: BasicPageConfig): Page {
 			out[i] = {
 				ring: to127(vals[i]),
 				rgb: colors[i],
-				ledBrightness: pressed[i] ? 10 : 5,
+				ledBrightness: pressed[i] ? PRESSED_BRIGHTNESS : baseBrightness[i],
 				ringBrightness: 31,
 				anim: "none",
 			}
@@ -85,6 +115,7 @@ export function BasicPage(config?: BasicPageConfig): Page {
 		init() {
 			for (let i = 0; i < 16; i++) vals[i] = 0
 			applyEncoderColors(initialColorSource)
+			applyEncoderBrightness(initialBrightnessSource)
 			dirty = true
 		},
 		onFocus() {

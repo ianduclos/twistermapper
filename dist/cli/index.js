@@ -42,7 +42,12 @@ let focusedSlot = 0;
 // Overlay state
 let overlayActive = false;
 let overlayLatched = false;
-let pendingUnlock = false; // set when main pressed without shift while latched
+let mainPressAt = 0;
+let mainHoldTimer = null;
+let mainHoldActive = false;
+let lastShortPressAt = 0;
+let lastMainEdgeAt = 0;
+let mainButtonDown = false;
 // Slot colors (use your config if you prefer)
 const SLOT_COLOR = {
     0: 110, // purple
@@ -55,8 +60,17 @@ const SLOT_COLOR = {
     7: 20, // magenta-ish
 };
 const SLOTS_CONFIG_PATH = resolvePath(process.cwd(), "configs/slots.json");
+const SETTINGS_CONFIG_PATH = resolvePath(process.cwd(), "configs/settings.json");
 const DEFAULT_PAGE_NAME = "Basic";
 const DEFAULT_ENCODER_COLOR = 110;
+const DEFAULT_BRIGHTNESS = 5;
+const DEFAULT_SETTINGS = {
+    interaction: {
+        mainDoubleClickMs: 320,
+        mainHoldThresholdMs: 200,
+        debounceMs: 20,
+    },
+};
 const PAGE_FACTORIES = {
     Basic: (config) => BasicPage(config),
 };
@@ -81,11 +95,67 @@ const sanitizeEncoderColors = (raw) => {
     }
     return out;
 };
+const sanitizeEncoderBrightness = (raw) => {
+    if (!Array.isArray(raw))
+        return undefined;
+    const out = [];
+    for (let i = 0; i < 16; i++) {
+        const val = raw[i];
+        let numeric;
+        if (typeof val === "number" && Number.isFinite(val)) {
+            numeric = val;
+        }
+        else if (typeof val === "bigint") {
+            numeric = Number(val);
+        }
+        else {
+            numeric = DEFAULT_BRIGHTNESS;
+        }
+        out.push(clamp(Math.round(numeric), 0, 29));
+    }
+    return out;
+};
+const loadSettings = () => {
+    let parsed;
+    try {
+        const raw = readFileSync(SETTINGS_CONFIG_PATH, "utf8");
+        parsed = JSON.parse(raw);
+    }
+    catch (err) {
+        const code = err?.code;
+        if (code && code !== "ENOENT") {
+            console.warn("[Settings] Failed to read configs/settings.json:", err);
+        }
+        return { ...DEFAULT_SETTINGS };
+    }
+    if (!isRecord(parsed))
+        return { ...DEFAULT_SETTINGS };
+    const interactionNode = isRecord(parsed.interaction)
+        ? parsed.interaction
+        : {};
+    const cleanNumber = (value, fallback) => {
+        if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+            return value;
+        }
+        if (typeof value === "bigint" && value > 0n) {
+            return Number(value);
+        }
+        return fallback;
+    };
+    return {
+        interaction: {
+            mainDoubleClickMs: cleanNumber(interactionNode.mainDoubleClickMs, DEFAULT_SETTINGS.interaction.mainDoubleClickMs),
+            mainHoldThresholdMs: cleanNumber(interactionNode.mainHoldThresholdMs, DEFAULT_SETTINGS.interaction.mainHoldThresholdMs),
+            debounceMs: cleanNumber(interactionNode.debounceMs, DEFAULT_SETTINGS.interaction.debounceMs),
+        },
+    };
+};
 const loadSlotDefinitions = () => {
     const defaults = SLOT_INDICES.map(() => ({
         pageName: DEFAULT_PAGE_NAME,
         createPage: () => BasicPage(),
         hasCustomColors: false,
+        hasCustomBrightness: false,
     }));
     let parsed;
     try {
@@ -113,20 +183,27 @@ const loadSlotDefinitions = () => {
             console.warn(`[Slots] Slot ${label}: unknown page "${rawPageName}", defaulting to ${DEFAULT_PAGE_NAME}`);
         }
         let hasCustomColors = false;
+        let hasCustomBrightness = false;
         let encoderColors;
+        let encoderBrightness;
         if (pageName === "Basic") {
             const configNode = entry && isRecord(entry.config)
                 ? entry.config
                 : undefined;
-            if (Array.isArray(configNode?.encoderColors)) {
-                hasCustomColors = true;
-            }
             encoderColors = sanitizeEncoderColors(configNode?.encoderColors);
+            hasCustomColors = encoderColors !== undefined;
+            encoderBrightness = sanitizeEncoderBrightness(configNode?.encoderBrightness);
+            hasCustomBrightness = encoderBrightness !== undefined;
         }
         const createPage = () => {
             if (pageName === "Basic") {
-                const cfg = encoderColors
-                    ? { encoderColors: [...encoderColors] }
+                const cfg = encoderColors || encoderBrightness
+                    ? {
+                        encoderColors: encoderColors ? [...encoderColors] : undefined,
+                        encoderBrightness: encoderBrightness
+                            ? [...encoderBrightness]
+                            : undefined,
+                    }
                     : undefined;
                 return BasicPage(cfg);
             }
@@ -136,6 +213,7 @@ const loadSlotDefinitions = () => {
             pageName,
             createPage,
             hasCustomColors,
+            hasCustomBrightness,
         });
     }
     return result;
@@ -147,7 +225,13 @@ const customColorLabels = SLOT_INDICES.filter((slot, idx) => slotDefinitions[idx
 const colorsSummary = customColorLabels.length > 0
     ? `custom on ${customColorLabels.join(",")}`
     : "default";
-console.log(`Slots: ${pageSummary} (colors: ${colorsSummary})`);
+const customBrightnessLabels = SLOT_INDICES.filter((slot, idx) => slotDefinitions[idx].hasCustomBrightness).map((slot) => slotLabel(slot));
+const brightnessSummary = customBrightnessLabels.length > 0
+    ? `custom on ${customBrightnessLabels.join(",")}`
+    : "default";
+console.log(`Slots: ${pageSummary} (colors: ${colorsSummary}; brightness: ${brightnessSummary})`);
+const settings = loadSettings();
+const { mainDoubleClickMs, mainHoldThresholdMs, debounceMs, } = settings.interaction;
 const parseSlotInput = (value) => {
     if (typeof value === "number" && Number.isInteger(value)) {
         const idx = value;
@@ -192,6 +276,41 @@ function paintFocusedPage() {
     rec.beginFocusPaint();
     rec.push(pm.getDesiredFocused());
 }
+function clearMainHoldTimer() {
+    if (mainHoldTimer) {
+        clearTimeout(mainHoldTimer);
+        mainHoldTimer = null;
+    }
+}
+function activateOverlayMomentary() {
+    if (!overlayActive) {
+        overlayActive = true;
+        paintOverlay();
+    }
+    mainHoldActive = true;
+}
+function deactivateOverlayIfMomentary() {
+    mainHoldActive = false;
+    if (!overlayLatched && overlayActive) {
+        overlayActive = false;
+        paintFocusedPage();
+    }
+}
+function setOverlayLatch(next) {
+    if (overlayLatched === next)
+        return;
+    overlayLatched = next;
+    if (overlayLatched) {
+        overlayActive = true;
+        paintOverlay();
+        console.log("Main latch: ON");
+    }
+    else {
+        overlayActive = false;
+        paintFocusedPage();
+        console.log("Main latch: OFF");
+    }
+}
 // ---- Page manager: guard pushes while overlay is active ----
 const pm = new PageManager(baseCtx, (frame, reason) => {
     if (overlayActive)
@@ -228,44 +347,34 @@ dec.onEvent((ev) => {
                 modifiers.globalLeft = ev.down;
                 return;
             }
-            // Right global (overlay control)
             modifiers.globalRight = ev.down;
+            const now = Date.now();
+            if (now - lastMainEdgeAt < debounceMs && ev.down === mainButtonDown)
+                return;
+            lastMainEdgeAt = now;
+            mainButtonDown = ev.down;
             if (ev.down) {
-                if (modifiers.shiftRight && !overlayLatched) {
-                    // LOCK overlay
-                    overlayLatched = true;
-                    overlayActive = true;
-                    pendingUnlock = false;
-                    paintOverlay();
-                }
-                else if (!modifiers.shiftRight) {
-                    if (overlayLatched) {
-                        // Prepare to UNLOCK on release
-                        pendingUnlock = true;
-                        // keep overlayActive true; repaint not needed
-                    }
-                    else if (!overlayActive) {
-                        // Momentary overlay
-                        overlayActive = true;
-                        paintOverlay();
-                    }
-                }
+                mainPressAt = now;
+                mainHoldActive = false;
+                clearMainHoldTimer();
+                mainHoldTimer = setTimeout(() => {
+                    mainHoldTimer = null;
+                    activateOverlayMomentary();
+                }, mainHoldThresholdMs);
+                return;
             }
-            else {
-                // Button released
-                if (pendingUnlock) {
-                    // UNLOCK now
-                    pendingUnlock = false;
-                    overlayLatched = false;
-                    overlayActive = false;
-                    paintFocusedPage();
-                }
-                else if (!overlayLatched && overlayActive) {
-                    // End momentary overlay
-                    overlayActive = false;
-                    paintFocusedPage();
-                }
+            const pressDuration = now - mainPressAt;
+            clearMainHoldTimer();
+            if (pressDuration >= mainHoldThresholdMs || mainHoldActive) {
+                deactivateOverlayIfMomentary();
+                return;
             }
+            if (lastShortPressAt && now - lastShortPressAt <= mainDoubleClickMs) {
+                lastShortPressAt = 0;
+                setOverlayLatch(!overlayLatched);
+                return;
+            }
+            lastShortPressAt = now;
             return;
         default:
             break;
