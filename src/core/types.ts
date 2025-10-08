@@ -61,6 +61,27 @@ export interface Page {
 export type Slot = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
 export type SlotLabel = "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h"
 
+export const SLOT_INDICES: readonly Slot[] = [0, 1, 2, 3, 4, 5, 6, 7] as const
+export const SLOT_LABELS: readonly SlotLabel[] = [
+	"a",
+	"b",
+	"c",
+	"d",
+	"e",
+	"f",
+	"g",
+	"h",
+] as const
+
+export const slotLabel = (slot: Slot): SlotLabel => SLOT_LABELS[slot]
+
+export const slotFromLabel = (label: string): Slot | undefined => {
+	const lower = label.toLowerCase()
+	const idx = SLOT_LABELS.findIndex((entry) => entry === lower)
+	if (idx === -1) return undefined
+	return SLOT_INDICES[idx]
+}
+
 export type OnFrameReason = "event" | "osc" | "dirty" | "focus"
 
 export type OnFrame = (

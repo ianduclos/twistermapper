@@ -16,17 +16,18 @@ import {
 	InputEvent,
 	PageContext,
 	Slot,
-	SlotLabel,
 	OnFrame,
+	SLOT_INDICES,
+	slotLabel,
 } from "./types.js"
 
-const SLOTS: readonly Slot[] = [0, 1, 2, 3, 4, 5, 6, 7] as const
-const LABELS: readonly SlotLabel[] = ["a", "b", "c", "d", "e", "f", "g", "h"] as const
-
 export class PageManager {
-	private pages: (Page | null)[] = Array.from({ length: SLOTS.length }, () => null)
+	private pages: (Page | null)[] = Array.from(
+		{ length: SLOT_INDICES.length },
+		() => null
+	)
 	private desired: (LedFrame | undefined)[] = Array.from(
-		{ length: SLOTS.length },
+		{ length: SLOT_INDICES.length },
 		() => undefined
 	)
 	private focused: Slot = 0
@@ -41,11 +42,11 @@ export class PageManager {
 	) {
 		this.onFrame = onFrame
 
-		for (const slot of SLOTS) {
+		for (const slot of SLOT_INDICES) {
 			this.ctxPerSlot[slot] = {
 				...baseCtx,
 				slot,
-				slotLabel: LABELS[slot],
+				slotLabel: slotLabel(slot),
 				setDirty: () => {
 					const p = this.pages[slot]
 					if (!p) return

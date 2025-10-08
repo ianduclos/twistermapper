@@ -11,20 +11,68 @@ Acceptance Criteria:
 - Do not import MIDI here; only express desired LED state.
 */
 
-import { Page, LedFrame, EncId } from "../core/types.js"
+import { Page, LedFrame, EncId, PageContext } from "../core/types.js"
 import { clamp, toFixedN, to127 } from "../util/scale.js"
 
-export function BasicPage(): Page {
+export interface BasicPageConfig {
+	encoderColors?: unknown
+}
+
+const DEFAULT_COLOR = 110
+const COLOR_MIN = 1
+const COLOR_MAX = 126
+
+export function BasicPage(config?: BasicPageConfig): Page {
 	const vals = new Int16Array(16) // 0..127
 	const pressed = new Array<boolean>(16).fill(false)
+	const colors = new Array<number>(16).fill(DEFAULT_COLOR)
+	const initialColorSource = config?.encoderColors
 	let dirty = true
+
+	const clampColor = (value: unknown): number => {
+		if (typeof value === "number" && Number.isFinite(value)) {
+			return clamp(Math.round(value), COLOR_MIN, COLOR_MAX)
+		}
+		if (typeof value === "bigint") {
+			return clamp(Number(value), COLOR_MIN, COLOR_MAX)
+		}
+		return DEFAULT_COLOR
+	}
+
+	const applyEncoderColors = (input: unknown): boolean => {
+		const src = Array.isArray(input) ? input : []
+		let changed = false
+		for (let i = 0; i < 16; i++) {
+			const next = clampColor(src[i])
+			if (colors[i] !== next) {
+				colors[i] = next
+				changed = true
+			}
+		}
+		return changed
+	}
+
+	const updateSingleColor = (encId: number, value: unknown): boolean => {
+		if (!Number.isInteger(encId) || encId < 0 || encId > 15) return false
+		const next = clampColor(value)
+		if (colors[encId] === next) return false
+		colors[encId] = next
+		return true
+	}
+
+	const sendDump = (ctx: PageContext) => {
+		const colorPayload = colors.map((c) => c)
+		const valuePayload = Array.from(vals, (v) => toFixedN(v / 127, 5))
+		ctx.osc.send(`/twister_out/page_${ctx.slotLabel}/encoderColors`, ...colorPayload)
+		ctx.osc.send(`/twister_out/page_${ctx.slotLabel}/allvalues`, ...valuePayload)
+	}
 
 	const frame = (): LedFrame => {
 		const out: any = {}
 		for (let i = 0; i < 16; i++) {
 			out[i] = {
 				ring: to127(vals[i]),
-				rgb: 110,
+				rgb: colors[i],
 				ledBrightness: pressed[i] ? 10 : 5,
 				ringBrightness: 31,
 				anim: "none",
@@ -36,6 +84,7 @@ export function BasicPage(): Page {
 	return {
 		init() {
 			for (let i = 0; i < 16; i++) vals[i] = 0
+			applyEncoderColors(initialColorSource)
 			dirty = true
 		},
 		onFocus() {
@@ -53,13 +102,37 @@ export function BasicPage(): Page {
 					toFixedN(vals[ev.id] / 127, 5)
 				)
 				dirty = true
-			}
-			if (ev.type === "encoder/press") {
-				pressed[ev.id] = ev.down
-				dirty = true
-			}
+				}
+				if (ev.type === "encoder/press") {
+					pressed[ev.id] = ev.down
+					dirty = true
+				}
 		},
 		onOsc(path, args, ctx) {
+			if (path === "/config/encoderColors") {
+				const changed = applyEncoderColors(args)
+				if (changed) {
+					dirty = true
+					ctx.setDirty()
+				}
+				return
+			}
+
+			if (path === "/config/encoderColor") {
+				const encId = Number(args[0])
+				const color = args[1]
+				if (updateSingleColor(encId, color)) {
+					dirty = true
+					ctx.setDirty()
+				}
+				return
+			}
+
+			if (path === "/dump") {
+				sendDump(ctx)
+				return
+			}
+
 			// /twister_in/page_{x}/set/{id} {normFloat}
 			const m = path.match(/\/set\/(\d{1,2})$/)
 			if (m) {

@@ -9,22 +9,21 @@ Acceptance Criteria:
 - getDesiredFocused(): returns latest LedFrame | undefined.
 - Keep ctx reference as provided; do not mutate ctx shape.
 */
-const SLOTS = [0, 1, 2, 3, 4, 5, 6, 7];
-const LABELS = ["a", "b", "c", "d", "e", "f", "g", "h"];
+import { SLOT_INDICES, slotLabel, } from "./types.js";
 export class PageManager {
-    pages = Array.from({ length: SLOTS.length }, () => null);
-    desired = Array.from({ length: SLOTS.length }, () => undefined);
+    pages = Array.from({ length: SLOT_INDICES.length }, () => null);
+    desired = Array.from({ length: SLOT_INDICES.length }, () => undefined);
     focused = 0;
     // We keep a separate ctx per slot so setDirty knows who called.
     ctxPerSlot = [];
     onFrame;
     constructor(baseCtx, onFrame) {
         this.onFrame = onFrame;
-        for (const slot of SLOTS) {
+        for (const slot of SLOT_INDICES) {
             this.ctxPerSlot[slot] = {
                 ...baseCtx,
                 slot,
-                slotLabel: LABELS[slot],
+                slotLabel: slotLabel(slot),
                 setDirty: () => {
                     const p = this.pages[slot];
                     if (!p)

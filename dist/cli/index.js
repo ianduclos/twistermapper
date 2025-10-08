@@ -1,4 +1,6 @@
 // src/cli/index.ts
+import { readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import midiLib from "@julusian/midi";
 import { NodeMidiDriver } from "../io/midiDriver.js"; // real driver from Codex task
 import { LedReconciler } from "../render/ledReconciler.js";
@@ -7,6 +9,8 @@ import { BasicPage } from "../pages/basic.js";
 import { createInputDecoder } from "../io/inputDecoder.js";
 import { createOsc } from "../io/osc.js";
 import { runRandomSplash, settleFocused } from "../boot/bootSplashes.js";
+import { SLOT_INDICES, slotFromLabel, slotLabel, } from "../core/types.js";
+import { clamp } from "../util/scale.js";
 // ---- Port selection via CLI/env (optional but handy) ----
 const arg = (name) => {
     const i = process.argv.indexOf(name);
@@ -40,17 +44,6 @@ let overlayActive = false;
 let overlayLatched = false;
 let pendingUnlock = false; // set when main pressed without shift while latched
 // Slot colors (use your config if you prefer)
-const SLOT_LABELS = [
-    "a",
-    "b",
-    "c",
-    "d",
-    "e",
-    "f",
-    "g",
-    "h",
-];
-const SLOTS = [0, 1, 2, 3, 4, 5, 6, 7];
 const SLOT_COLOR = {
     0: 110, // purple
     1: 1, // blue
@@ -61,18 +54,104 @@ const SLOT_COLOR = {
     6: 33, // cyan
     7: 20, // magenta-ish
 };
-const slotFromLabel = (label) => {
-    const lower = label.toLowerCase();
-    const idx = SLOT_LABELS.findIndex((l) => l === lower);
-    if (idx === -1)
-        return undefined;
-    const slot = SLOTS[idx];
-    return slot === undefined ? undefined : slot;
+const SLOTS_CONFIG_PATH = resolvePath(process.cwd(), "configs/slots.json");
+const DEFAULT_PAGE_NAME = "Basic";
+const DEFAULT_ENCODER_COLOR = 110;
+const PAGE_FACTORIES = {
+    Basic: (config) => BasicPage(config),
 };
+const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+const sanitizeEncoderColors = (raw) => {
+    if (!Array.isArray(raw))
+        return undefined;
+    const out = [];
+    for (let i = 0; i < 16; i++) {
+        const val = raw[i];
+        let numeric;
+        if (typeof val === "number" && Number.isFinite(val)) {
+            numeric = val;
+        }
+        else if (typeof val === "bigint") {
+            numeric = Number(val);
+        }
+        else {
+            numeric = DEFAULT_ENCODER_COLOR;
+        }
+        out.push(clamp(Math.round(numeric), 1, 126));
+    }
+    return out;
+};
+const loadSlotDefinitions = () => {
+    const defaults = SLOT_INDICES.map(() => ({
+        pageName: DEFAULT_PAGE_NAME,
+        createPage: () => BasicPage(),
+        hasCustomColors: false,
+    }));
+    let parsed;
+    try {
+        const raw = readFileSync(SLOTS_CONFIG_PATH, "utf8");
+        parsed = JSON.parse(raw);
+    }
+    catch (err) {
+        const code = err?.code;
+        if (code && code !== "ENOENT") {
+            console.warn("[Slots] Failed to read configs/slots.json:", err);
+        }
+        return defaults;
+    }
+    if (!isRecord(parsed))
+        return defaults;
+    const slotsNode = isRecord(parsed.slots) ? parsed.slots : {};
+    const result = [];
+    for (const slot of SLOT_INDICES) {
+        const label = slotLabel(slot);
+        const entry = isRecord(slotsNode[label]) ? slotsNode[label] : undefined;
+        const rawPageName = entry && typeof entry.page === "string" ? entry.page : DEFAULT_PAGE_NAME;
+        const factory = PAGE_FACTORIES[rawPageName] ?? PAGE_FACTORIES[DEFAULT_PAGE_NAME];
+        const pageName = factory === PAGE_FACTORIES[rawPageName] ? rawPageName : DEFAULT_PAGE_NAME;
+        if (factory !== PAGE_FACTORIES[rawPageName]) {
+            console.warn(`[Slots] Slot ${label}: unknown page "${rawPageName}", defaulting to ${DEFAULT_PAGE_NAME}`);
+        }
+        let hasCustomColors = false;
+        let encoderColors;
+        if (pageName === "Basic") {
+            const configNode = entry && isRecord(entry.config)
+                ? entry.config
+                : undefined;
+            if (Array.isArray(configNode?.encoderColors)) {
+                hasCustomColors = true;
+            }
+            encoderColors = sanitizeEncoderColors(configNode?.encoderColors);
+        }
+        const createPage = () => {
+            if (pageName === "Basic") {
+                const cfg = encoderColors
+                    ? { encoderColors: [...encoderColors] }
+                    : undefined;
+                return BasicPage(cfg);
+            }
+            return factory();
+        };
+        result.push({
+            pageName,
+            createPage,
+            hasCustomColors,
+        });
+    }
+    return result;
+};
+const slotDefinitions = loadSlotDefinitions();
+const slotPageNames = slotDefinitions.map((def) => def.pageName);
+const pageSummary = SLOT_INDICES.map((slot, idx) => `${slotLabel(slot)}=${slotDefinitions[idx].pageName}`).join(", ");
+const customColorLabels = SLOT_INDICES.filter((slot, idx) => slotDefinitions[idx].hasCustomColors).map((slot) => slotLabel(slot));
+const colorsSummary = customColorLabels.length > 0
+    ? `custom on ${customColorLabels.join(",")}`
+    : "default";
+console.log(`Slots: ${pageSummary} (colors: ${colorsSummary})`);
 const parseSlotInput = (value) => {
     if (typeof value === "number" && Number.isInteger(value)) {
         const idx = value;
-        return idx >= 0 && idx < SLOTS.length ? SLOTS[idx] : undefined;
+        return idx >= 0 && idx < SLOT_INDICES.length ? SLOT_INDICES[idx] : undefined;
     }
     if (typeof value === "string") {
         const lower = value.toLowerCase();
@@ -97,8 +176,8 @@ function renderOverlay(focus) {
     for (let i = 0; i < 16; i = (i + 1)) {
         frame[i] = mk();
     }
-    // Light encoders 0..3 for slots A..D
-    for (const s of SLOTS) {
+    // Light encoders 0..7 for slots A..H
+    for (const s of SLOT_INDICES) {
         frame[s] = mk({ rgb: SLOT_COLOR[s], ledBrightness: 5 });
     }
     // Highlight currently focused slot
@@ -124,9 +203,9 @@ const pm = new PageManager(baseCtx, (frame, reason) => {
 // Load & focus slot A (and remember which)
 void (async () => {
     await runRandomSplash(rec);
-    for (const slot of SLOTS) {
-        pm.load(slot, BasicPage);
-    }
+    SLOT_INDICES.forEach((slot, idx) => {
+        pm.load(slot, slotDefinitions[idx].createPage);
+    });
     pm.focus(0);
     settleFocused(pm, rec);
     startTwisterWatcher(pm);
@@ -191,7 +270,7 @@ dec.onEvent((ev) => {
         default:
             break;
     }
-    // While overlay is active, only handle encoder button presses 0..3
+    // While overlay is active, only handle encoder button presses 0..7
     if (overlayActive) {
         if (ev.type === "encoder/press" && ev.down && ev.id >= 0 && ev.id <= 7) {
             const s = ev.id;
@@ -235,6 +314,14 @@ osc.onMessage((path, args) => {
         const slot = slotFromLabel(m[1]);
         if (slot !== undefined) {
             const sub = `/` + m[2]; // pass the remainder to the page
+            if ((sub === "/config/encoderColors" ||
+                sub === "/config/encoderColor" ||
+                sub === "/dump") &&
+                slotPageNames[slot] !== "Basic") {
+                const label = slotLabel(slot);
+                console.warn(`[OSC] Slot ${label} (${slotPageNames[slot]}) does not support ${sub}`);
+                return;
+            }
             pm.routeOscToPage(slot, sub, args);
         }
         return;

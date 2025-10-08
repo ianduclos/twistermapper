@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "slots": {
+    "a": {
+      "page": "Basic",
+      "config": {
+        "encoderColors": [110, 1, 60, 66, 74, 80, 33, 20, 110, 1, 60, 66, 74, 80, 33, 20]
+      }
+    },
+    "b": { "page": "Basic" },
+    "c": {
+      "page": "Basic",
+      "config": {
+        "encoderColors": [74, 74, 74, 74, 74, 74, 74, 74, 60, 60, 60, 60, 60, 60, 60, 60]
+      }
+    },
+    "d": { "page": "Basic" },
+    "e": { "page": "Basic" },
+    "f": { "page": "Basic" },
+    "g": { "page": "Basic" },
+    "h": { "page": "Basic" }
+  }
+}
