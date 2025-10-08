@@ -53,11 +53,12 @@ OSC
 
 Out (page-specific):
 • /\*_ twister*out / page*{a|b|c|d|e|f|g|h} _/ <encId 0..15> <valueNormalized 0..1>
+• /twister_out/page_{slot}/press <encId> <0|1> (pages that broadcast button state, e.g., BasicPage, StepSeqPage).
 • Example (BasicPage): /twister_out/page_a 1 0.77380 (≤ 5 decimals).
 
 In (core):
 • /twister_in/focus {a|b|c|d|e|f|g|h | 0|1|2|3|4|5|6|7} → focus page by letter or index.
-• /twister_in/clock 1 → reserved; no clock logic yet.
+• /twister_in/clock 1 → external clock tick broadcast to all pages (StepSeqPage consumes this).
 
 In (page):
 • /twister*in/page*{a|b|c|d|e|f|g|h}/set <encId> <normalized> → set internal value (page decides if it’s allowed; e.g., GesturePage only in standby).
@@ -86,7 +87,7 @@ BasicPage (reference)
 • LED ring mirrors value (scaled 0..127).
 • Defaults: purple (110), ledBrightness = 5 (device 23), ringBrightness = 31.
 • Press (hold): temporarily set ledBrightness = 29 (max); release restores.
-• OSC out on change: /twister_out/page_x <id> <val/127> (≤ 5 dp).
+• OSC out on change: /twister_out/page_x <id> <val/127> (≤ 5 dp) and /twister_out/page_x/press <encId> <0|1> when encoder buttons change.
 • OSC in (optional): /twister_in/page_x/set <id> <norm>.
 
 GesturePage (record / playback looper)
@@ -95,6 +96,13 @@ GesturePage (record / playback looper)
 • Playback: 20 ms tick; modular interpolation between points; wrap using a synthetic segment to the first value so loops are smooth. Ignore deltas while in playback.
 • OSC in: only accept /set in standby (external param control); reject in record/playback.
 • Keeps timers running off-focus; only LEDs for the focused page are sent.
+
+StepSeqPage (clocked 4-track sequencer)
+• Four tracks (encoders 0–3) each with 12 steps, individual playhead, loop start/end, and per-step probability.
+• Tracks emit `/twister_out/page_{slot} <track> <valueNorm>` on every `/twister_in/clock 1` tick; LEDs show per-track values (highlighted track at brightness 29, others 10). When a probability roll fails, the playhead holds for one extra tick before retrying.
+• Encoders 4–15 display the highlighted track’s 12 steps: loop inclusion uses dim/bright states, playhead flashes at track color+13 and brightness 29. Holding right shift swaps the view to probability percentages (rings scale 0–100%).
+• Turning step encoders edits values in normal mode; with right shift held they adjust that step’s probability (0–100%). Top encoders 0–3 adjust all probabilities within the track while shift is held. Pressing steps sets loop ends or ranges (press+press chord). Loop edits keep playhead inside bounds and can trigger immediate output updates.
+• Step button presses also broadcast `/twister_out/page_{slot}/press <encId> <0|1>`; page keeps running while unfocused so clock ticks advance playheads regardless of focus.
 
 ⸻
 
@@ -136,6 +144,7 @@ Boot splash (startup warm-up)
 Config (JSON)
 • Color indices, channel/CC/note map, and any optional encoder index offset/map are defined in JSON.
 • configs/slots.json selects page prototypes (A–H) and optional BasicPage encoder color/brightness palettes.
+• StepSeq slots may provide per-track clock lists (e.g., `{"tracks":[{"clockIds":[0,2,5]},...]}`) to decide which `/twister_in/clock` IDs advance each track (default 0).
 • configs/settings.json defines interaction timings (double-click window, hold threshold, debounce) for the Main overlay trigger.
 • Only the MIDI driver knows about device numbers & channels; core code works with human-readable values:
 • LED brightness: human 0..29 → device 18..47.
@@ -182,6 +191,7 @@ Rules (IDs)
 Known-good behaviors to preserve
 • BasicPage: realtime OSC out on value change; press-to-brighten works; default purple color & brightness levels render correctly on first focus after boot splash.
 • GesturePage: record → playback loop wraps smoothly; end silence is recorded (final point always appended); playback ignores deltas.
+• StepSeqPage: clock ticks advance all four tracks, respect per-step probability delays, emit OSC per track, maintain loop bounds, and honor highlighted track LED/probability views.
 • Main overlay: momentary hold or double-click latch; selector colors/brightness show focus; switching focus repaints the new page frame using beginFocusPaint() + normal rate limits.
 
 ⸻

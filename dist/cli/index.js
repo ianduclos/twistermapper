@@ -7,6 +7,7 @@ import { LedReconciler } from "../render/ledReconciler.js";
 import { PageManager } from "../core/pageManager.js";
 import { BasicPage } from "../pages/basic.js";
 import { GesturePage } from "../pages/gestures.js";
+import { StepSeqPage } from "../pages/stepSeq.js";
 import { createInputDecoder } from "../io/inputDecoder.js";
 import { createOsc } from "../io/osc.js";
 import { runRandomSplash, settleFocused } from "../boot/bootSplashes.js";
@@ -78,6 +79,7 @@ const DEFAULT_SETTINGS = {
 const PAGE_FACTORIES = {
     Basic: (config) => BasicPage(config),
     Gesture: () => GesturePage(),
+    StepSeq: (config) => StepSeqPage(config),
 };
 const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 // Expect an array-like palette; fallback to defaults while clamping into device range.
@@ -121,6 +123,42 @@ const sanitizeEncoderBrightness = (raw) => {
         out.push(clamp(Math.round(numeric), 0, 29));
     }
     return out;
+};
+const STEPSEQ_TRACK_COUNT = 4;
+const DEFAULT_STEPSEQ_CLOCK_IDS = [0];
+const sanitizeClockIdList = (value) => {
+    const arr = Array.isArray(value) ? value : value === undefined ? undefined : [value];
+    if (!arr)
+        return [...DEFAULT_STEPSEQ_CLOCK_IDS];
+    const ids = [];
+    for (const item of arr) {
+        const n = Math.round(Number(item));
+        if (!Number.isFinite(n))
+            continue;
+        const clamped = clamp(n, 0, 5);
+        if (!ids.includes(clamped))
+            ids.push(clamped);
+    }
+    if (!ids.length)
+        return [...DEFAULT_STEPSEQ_CLOCK_IDS];
+    ids.sort((a, b) => a - b);
+    return ids;
+};
+const arraysEqual = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+const sanitizeStepSeqConfig = (raw) => {
+    if (!isRecord(raw))
+        return undefined;
+    const tracksValue = raw["tracks"];
+    const tracksRaw = Array.isArray(tracksValue) ? tracksValue : [];
+    let custom = false;
+    const tracks = Array.from({ length: STEPSEQ_TRACK_COUNT }, (_, idx) => {
+        const node = isRecord(tracksRaw[idx]) ? tracksRaw[idx] : undefined;
+        const clockIds = sanitizeClockIdList(node?.["clockIds"]);
+        if (!arraysEqual(clockIds, DEFAULT_STEPSEQ_CLOCK_IDS))
+            custom = true;
+        return { clockIds };
+    });
+    return custom ? { tracks } : undefined;
 };
 // Load interaction timing overrides, tolerating missing or malformed files.
 const loadSettings = () => {
@@ -192,20 +230,17 @@ const loadSlotDefinitions = () => {
         }
         let hasCustomColors = false;
         let hasCustomBrightness = false;
-        let encoderColors;
-        let encoderBrightness;
+        let pageConfig;
         if (pageName === "Basic") {
             const configNode = entry && isRecord(entry.config)
                 ? entry.config
                 : undefined;
-            encoderColors = sanitizeEncoderColors(configNode?.encoderColors);
+            const encoderColors = sanitizeEncoderColors(configNode?.encoderColors);
             hasCustomColors = encoderColors !== undefined;
-            encoderBrightness = sanitizeEncoderBrightness(configNode?.encoderBrightness);
+            const encoderBrightness = sanitizeEncoderBrightness(configNode?.encoderBrightness);
             hasCustomBrightness = encoderBrightness !== undefined;
-        }
-        const createPage = () => {
-            if (pageName === "Basic") {
-                const cfg = encoderColors || encoderBrightness
+            pageConfig =
+                encoderColors || encoderBrightness
                     ? {
                         encoderColors: encoderColors ? [...encoderColors] : undefined,
                         encoderBrightness: encoderBrightness
@@ -213,7 +248,26 @@ const loadSlotDefinitions = () => {
                             : undefined,
                     }
                     : undefined;
-                return BasicPage(cfg);
+        }
+        else if (pageName === "StepSeq") {
+            const configNode = entry && isRecord(entry.config)
+                ? entry.config
+                : undefined;
+            pageConfig = sanitizeStepSeqConfig(configNode);
+        }
+        const createPage = () => {
+            if (pageName === "Basic") {
+                return factory(pageConfig);
+            }
+            if (pageName === "StepSeq") {
+                const cfg = pageConfig;
+                return factory(cfg
+                    ? {
+                        tracks: cfg.tracks?.map((t) => ({
+                            clockIds: t.clockIds ? [...t.clockIds] : undefined,
+                        })),
+                    }
+                    : undefined);
             }
             return factory();
         };
@@ -440,9 +494,11 @@ osc.onMessage((path, args) => {
         }
         return;
     }
-    // /twister_in/clock 1   (reserved; no clock logic yet)
+    // /twister_in/clock 1 tick → broadcast to all pages (StepSeq uses this)
     if (path === "/twister_in/clock") {
-        // you could fan this out to pages later
+        for (const slot of SLOT_INDICES) {
+            pm.routeOscToPage(slot, path, args);
+        }
         return;
     }
     // /twister_in/page_{a|...|h}/...

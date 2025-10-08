@@ -7,6 +7,7 @@ import { LedReconciler } from "../render/ledReconciler.js"
 import { PageManager } from "../core/pageManager.js"
 import { BasicPage } from "../pages/basic.js"
 import { GesturePage } from "../pages/gestures.js"
+import { StepSeqPage } from "../pages/stepSeq.js"
 import { createInputDecoder } from "../io/inputDecoder.js"
 import { createOsc } from "../io/osc.js"
 import { runRandomSplash, settleFocused } from "../boot/bootSplashes.js"
@@ -24,6 +25,7 @@ import {
 	slotLabel,
 } from "../core/types.js"
 import type { BasicPageConfig } from "../pages/basic.js"
+import type { StepSeqConfig } from "../pages/stepSeq.js"
 import { clamp } from "../util/scale.js"
 
 // ---- Port selection via CLI/env (optional but handy) ----
@@ -134,11 +136,12 @@ type SlotDefinition = {
 	hasCustomBrightness: boolean
 }
 
-type PageFactory = (config?: BasicPageConfig) => Page
+type PageFactory = (config?: unknown) => Page
 
 const PAGE_FACTORIES: Record<string, PageFactory> = {
-	Basic: (config?: BasicPageConfig) => BasicPage(config),
+	Basic: (config?: unknown) => BasicPage(config as BasicPageConfig | undefined),
 	Gesture: () => GesturePage(),
+	StepSeq: (config?: unknown) => StepSeqPage(config as StepSeqConfig | undefined),
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -180,6 +183,41 @@ const sanitizeEncoderBrightness = (raw: unknown): number[] | undefined => {
 		out.push(clamp(Math.round(numeric), 0, 29))
 	}
 	return out
+}
+
+const STEPSEQ_TRACK_COUNT = 4
+const DEFAULT_STEPSEQ_CLOCK_IDS = [0] as const
+
+const sanitizeClockIdList = (value: unknown): number[] => {
+	const arr = Array.isArray(value) ? value : value === undefined ? undefined : [value]
+	if (!arr) return [...DEFAULT_STEPSEQ_CLOCK_IDS]
+	const ids: number[] = []
+	for (const item of arr) {
+		const n = Math.round(Number(item))
+		if (!Number.isFinite(n)) continue
+		const clamped = clamp(n, 0, 5)
+		if (!ids.includes(clamped)) ids.push(clamped)
+	}
+	if (!ids.length) return [...DEFAULT_STEPSEQ_CLOCK_IDS]
+	ids.sort((a, b) => a - b)
+	return ids
+}
+
+const arraysEqual = (a: number[], b: readonly number[]) =>
+	a.length === b.length && a.every((v, i) => v === b[i])
+
+const sanitizeStepSeqConfig = (raw: unknown): StepSeqConfig | undefined => {
+	if (!isRecord(raw)) return undefined
+	const tracksValue = (raw as Record<string, unknown>)["tracks"]
+	const tracksRaw = Array.isArray(tracksValue) ? tracksValue : []
+	let custom = false
+	const tracks: StepSeqConfig["tracks"] = Array.from({ length: STEPSEQ_TRACK_COUNT }, (_, idx) => {
+		const node = isRecord(tracksRaw[idx]) ? (tracksRaw[idx] as Record<string, unknown>) : undefined
+		const clockIds = sanitizeClockIdList(node?.["clockIds"])
+		if (!arraysEqual(clockIds, DEFAULT_STEPSEQ_CLOCK_IDS)) custom = true
+		return { clockIds }
+	})
+	return custom ? { tracks } : undefined
 }
 
 // Load interaction timing overrides, tolerating missing or malformed files.
@@ -270,22 +308,18 @@ const loadSlotDefinitions = (): SlotDefinition[] => {
 
 		let hasCustomColors = false
 		let hasCustomBrightness = false
-		let encoderColors: number[] | undefined
-		let encoderBrightness: number[] | undefined
+		let pageConfig: unknown
 		if (pageName === "Basic") {
 			const configNode =
 				entry && isRecord(entry.config)
 					? (entry.config as Record<string, unknown>)
 					: undefined
-			encoderColors = sanitizeEncoderColors(configNode?.encoderColors)
+			const encoderColors = sanitizeEncoderColors(configNode?.encoderColors)
 			hasCustomColors = encoderColors !== undefined
-			encoderBrightness = sanitizeEncoderBrightness(configNode?.encoderBrightness)
+			const encoderBrightness = sanitizeEncoderBrightness(configNode?.encoderBrightness)
 			hasCustomBrightness = encoderBrightness !== undefined
-		}
-
-		const createPage = () => {
-			if (pageName === "Basic") {
-				const cfg: BasicPageConfig | undefined = encoderColors || encoderBrightness
+			pageConfig =
+				encoderColors || encoderBrightness
 					? {
 						encoderColors: encoderColors ? [...encoderColors] : undefined,
 						encoderBrightness: encoderBrightness
@@ -293,7 +327,29 @@ const loadSlotDefinitions = (): SlotDefinition[] => {
 							: undefined,
 					}
 					: undefined
-				return BasicPage(cfg)
+		} else if (pageName === "StepSeq") {
+			const configNode =
+				entry && isRecord(entry.config)
+					? (entry.config as Record<string, unknown>)
+					: undefined
+			pageConfig = sanitizeStepSeqConfig(configNode)
+		}
+
+		const createPage = () => {
+			if (pageName === "Basic") {
+				return factory(pageConfig)
+			}
+			if (pageName === "StepSeq") {
+				const cfg = pageConfig as StepSeqConfig | undefined
+				return factory(
+					cfg
+						? {
+							tracks: cfg.tracks?.map((t) => ({
+								clockIds: t.clockIds ? [...t.clockIds] : undefined,
+							})),
+						}
+						: undefined
+				)
 			}
 			return factory()
 		}
@@ -571,9 +627,11 @@ osc.onMessage((path, args) => {
 		}
 		return
 	}
-	// /twister_in/clock 1   (reserved; no clock logic yet)
+	// /twister_in/clock 1 tick → broadcast to all pages (StepSeq uses this)
 	if (path === "/twister_in/clock") {
-		// you could fan this out to pages later
+		for (const slot of SLOT_INDICES) {
+			pm.routeOscToPage(slot, path, args)
+		}
 		return
 	}
 	// /twister_in/page_{a|...|h}/...

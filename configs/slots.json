@@ -22,6 +22,6 @@
 		"e": { "page": "Gesture" },
 		"f": { "page": "Gesture" },
 		"g": { "page": "Gesture" },
-		"h": { "page": "Gesture" }
+		"h": { "page": "StepSeq" }
 	}
 }
