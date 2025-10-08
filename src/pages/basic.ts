@@ -35,6 +35,11 @@ export function BasicPage(config?: BasicPageConfig): Page {
 	const initialColorSource = config?.encoderColors
 	const initialBrightnessSource = config?.encoderBrightness
 	let dirty = true
+	let ctxRef: PageContext | null = null
+
+	const emitPageType = (ctx: PageContext) => {
+		ctx.osc.send(`/twister_out/page_${ctx.slotLabel}/type`, "Basic")
+	}
 
 	const clampColor = (value: unknown): number => {
 		if (typeof value === "number" && Number.isFinite(value)) {
@@ -112,13 +117,16 @@ export function BasicPage(config?: BasicPageConfig): Page {
 	}
 
 	return {
-		init() {
+		init(ctx) {
+			ctxRef = ctx
+			emitPageType(ctx)
 			for (let i = 0; i < 16; i++) vals[i] = 0
 			applyEncoderColors(initialColorSource)
 			applyEncoderBrightness(initialBrightnessSource)
 			dirty = true
 		},
-		onFocus() {
+		onFocus(ctx) {
+			emitPageType(ctx)
 			dirty = true
 		},
 		onBlur() {},
@@ -133,11 +141,16 @@ export function BasicPage(config?: BasicPageConfig): Page {
 					toFixedN(vals[ev.id] / 127, 5)
 				)
 				dirty = true
-				}
-				if (ev.type === "encoder/press") {
-					pressed[ev.id] = ev.down
-					dirty = true
-				}
+			}
+			if (ev.type === "encoder/press") {
+				pressed[ev.id] = ev.down
+				ctx.osc.send(
+					`/twister_out/page_${ctx.slotLabel}/press`,
+					ev.id,
+					ev.down ? 1 : 0
+				)
+				dirty = true
+			}
 		},
 		onOsc(path, args, ctx) {
 			if (path === "/config/encoderColors") {
@@ -186,6 +199,8 @@ export function BasicPage(config?: BasicPageConfig): Page {
 			dirty = false
 			return frame()
 		},
-		dispose() {},
+		dispose() {
+			ctxRef = null
+		},
 	}
 }

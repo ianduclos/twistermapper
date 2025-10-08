@@ -1,7 +1,7 @@
 {
-  "interaction": {
-    "mainDoubleClickMs": 320,
-    "mainHoldThresholdMs": 200,
-    "debounceMs": 20
-  }
+	"interaction": {
+		"mainDoubleClickMs": 320,
+		"mainHoldThresholdMs": 170,
+		"debounceMs": 20
+	}
 }

@@ -35,6 +35,10 @@ export function GesturePage(): Page {
   let dirty = true;
   let ctxRef: PageContext | null = null;
 
+  const emitPageType = (ctx: PageContext) => {
+    ctx.osc.send(`/twister_out/page_${ctx.slotLabel}/type`, 'Gesture');
+  };
+
   const COLOR_BLUE  = Number(colors.blue  ?? 1);
   const COLOR_RED   = Number(colors.red   ?? 80);
   const COLOR_GREEN = Number(colors.green ?? 60);
@@ -142,10 +146,14 @@ export function GesturePage(): Page {
   return {
     init(ctx) {
       ctxRef = ctx;
+      emitPageType(ctx);
       for (let i = 0; i < 16; i++) vals[i] = 0;
       dirty = true;
     },
-    onFocus() { /* paint will happen via render */ dirty = true; },
+    onFocus(ctx) {
+      emitPageType(ctx);
+      dirty = true;
+    },
     onBlur()  { /* keep timers running; LEDs won’t update while unfocused */ },
     dispose() { for (let i = 0; i < 16; i++) stopTimer(i as EncId); ctxRef = null; },
 

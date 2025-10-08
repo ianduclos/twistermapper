@@ -29,6 +29,11 @@ Headless Node.js/TypeScript daemon that drives a MIDI Fighter Twister (MFT), ren
 - `/twister_in/page_{slot}/config/encoderColor <encId> <int>` – update one BasicPage encoder color.
 - `/twister_in/page_{slot}/dump` – request encoder colors + values.
 
+## Slots & Settings
+
+- `configs/slots.json` maps slots A–H to page factories and optional BasicPage encoder color/brightness palettes.
+- `configs/settings.json` tweaks main-button interaction timings (double-click window, hold threshold, debounce).
+
 ## Configuration Files
 
 - `configs/slots.json` – maps slots A–H to page factories and optional BasicPage encoder palettes.

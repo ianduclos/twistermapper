@@ -6,6 +6,7 @@ import { NodeMidiDriver } from "../io/midiDriver.js"; // real driver from Codex 
 import { LedReconciler } from "../render/ledReconciler.js";
 import { PageManager } from "../core/pageManager.js";
 import { BasicPage } from "../pages/basic.js";
+import { GesturePage } from "../pages/gestures.js";
 import { createInputDecoder } from "../io/inputDecoder.js";
 import { createOsc } from "../io/osc.js";
 import { runRandomSplash, settleFocused } from "../boot/bootSplashes.js";
@@ -39,15 +40,18 @@ const baseCtx = {
 };
 // Track focused slot locally so overlay can highlight it
 let focusedSlot = 0;
-// Overlay state
-let overlayActive = false;
-let overlayLatched = false;
-let mainPressAt = 0;
-let mainHoldTimer = null;
-let mainHoldActive = false;
-let lastShortPressAt = 0;
-let lastMainEdgeAt = 0;
-let mainButtonDown = false;
+const overlayState = {
+    active: false,
+    latched: false,
+};
+const mainButtonState = {
+    pressAt: 0,
+    holdTimer: null,
+    holdActive: false,
+    lastShortPressAt: 0,
+    lastEdgeAt: 0,
+    isDown: false,
+};
 // Slot colors (use your config if you prefer)
 const SLOT_COLOR = {
     0: 110, // purple
@@ -73,8 +77,10 @@ const DEFAULT_SETTINGS = {
 };
 const PAGE_FACTORIES = {
     Basic: (config) => BasicPage(config),
+    Gesture: () => GesturePage(),
 };
 const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+// Expect an array-like palette; fallback to defaults while clamping into device range.
 const sanitizeEncoderColors = (raw) => {
     if (!Array.isArray(raw))
         return undefined;
@@ -95,6 +101,7 @@ const sanitizeEncoderColors = (raw) => {
     }
     return out;
 };
+// Accept optional per-encoder brightness array (human 0..29).
 const sanitizeEncoderBrightness = (raw) => {
     if (!Array.isArray(raw))
         return undefined;
@@ -115,6 +122,7 @@ const sanitizeEncoderBrightness = (raw) => {
     }
     return out;
 };
+// Load interaction timing overrides, tolerating missing or malformed files.
 const loadSettings = () => {
     let parsed;
     try {
@@ -230,6 +238,20 @@ const brightnessSummary = customBrightnessLabels.length > 0
     ? `custom on ${customBrightnessLabels.join(",")}`
     : "default";
 console.log(`Slots: ${pageSummary} (colors: ${colorsSummary}; brightness: ${brightnessSummary})`);
+const BASIC_ONLY_SUB_PATHS = new Set([
+    "/config/encoderColors",
+    "/config/encoderColor",
+    "/dump",
+]);
+const isBasicSlot = (slot) => slotPageNames[slot] === "Basic";
+const allowBasicOnlyRoute = (slot, subPath) => {
+    if (!BASIC_ONLY_SUB_PATHS.has(subPath))
+        return true;
+    if (isBasicSlot(slot))
+        return true;
+    console.warn(`[OSC] Slot ${slotLabel(slot)} (${slotPageNames[slot]}) does not support ${subPath}`);
+    return false;
+};
 const settings = loadSettings();
 const { mainDoubleClickMs, mainHoldThresholdMs, debounceMs, } = settings.interaction;
 const parseSlotInput = (value) => {
@@ -277,43 +299,43 @@ function paintFocusedPage() {
     rec.push(pm.getDesiredFocused());
 }
 function clearMainHoldTimer() {
-    if (mainHoldTimer) {
-        clearTimeout(mainHoldTimer);
-        mainHoldTimer = null;
+    if (mainButtonState.holdTimer) {
+        clearTimeout(mainButtonState.holdTimer);
+        mainButtonState.holdTimer = null;
     }
 }
 function activateOverlayMomentary() {
-    if (!overlayActive) {
-        overlayActive = true;
+    if (!overlayState.active) {
+        overlayState.active = true;
         paintOverlay();
     }
-    mainHoldActive = true;
+    mainButtonState.holdActive = true;
 }
 function deactivateOverlayIfMomentary() {
-    mainHoldActive = false;
-    if (!overlayLatched && overlayActive) {
-        overlayActive = false;
+    mainButtonState.holdActive = false;
+    if (!overlayState.latched && overlayState.active) {
+        overlayState.active = false;
         paintFocusedPage();
     }
 }
 function setOverlayLatch(next) {
-    if (overlayLatched === next)
+    if (overlayState.latched === next)
         return;
-    overlayLatched = next;
-    if (overlayLatched) {
-        overlayActive = true;
+    overlayState.latched = next;
+    if (overlayState.latched) {
+        overlayState.active = true;
         paintOverlay();
         console.log("Main latch: ON");
     }
     else {
-        overlayActive = false;
+        overlayState.active = false;
         paintFocusedPage();
         console.log("Main latch: OFF");
     }
 }
 // ---- Page manager: guard pushes while overlay is active ----
 const pm = new PageManager(baseCtx, (frame, reason) => {
-    if (overlayActive)
+    if (overlayState.active)
         return; // overlay owns the LEDs
     if (reason === "focus")
         rec.beginFocusPaint();
@@ -349,38 +371,44 @@ dec.onEvent((ev) => {
             }
             modifiers.globalRight = ev.down;
             const now = Date.now();
-            if (now - lastMainEdgeAt < debounceMs && ev.down === mainButtonDown)
+            if (now - mainButtonState.lastEdgeAt < debounceMs && ev.down === mainButtonState.isDown)
                 return;
-            lastMainEdgeAt = now;
-            mainButtonDown = ev.down;
+            mainButtonState.lastEdgeAt = now;
+            mainButtonState.isDown = ev.down;
             if (ev.down) {
-                mainPressAt = now;
-                mainHoldActive = false;
+                mainButtonState.pressAt = now;
+                mainButtonState.holdActive = false;
                 clearMainHoldTimer();
-                mainHoldTimer = setTimeout(() => {
-                    mainHoldTimer = null;
+                mainButtonState.holdTimer = setTimeout(() => {
+                    mainButtonState.holdTimer = null;
                     activateOverlayMomentary();
                 }, mainHoldThresholdMs);
                 return;
             }
-            const pressDuration = now - mainPressAt;
+            const pressDuration = now - mainButtonState.pressAt;
             clearMainHoldTimer();
-            if (pressDuration >= mainHoldThresholdMs || mainHoldActive) {
+            if (pressDuration >= mainHoldThresholdMs || mainButtonState.holdActive) {
                 deactivateOverlayIfMomentary();
                 return;
             }
-            if (lastShortPressAt && now - lastShortPressAt <= mainDoubleClickMs) {
-                lastShortPressAt = 0;
-                setOverlayLatch(!overlayLatched);
+            if (overlayState.latched) {
+                setOverlayLatch(false);
+                mainButtonState.lastShortPressAt = 0;
                 return;
             }
-            lastShortPressAt = now;
+            if (mainButtonState.lastShortPressAt &&
+                now - mainButtonState.lastShortPressAt <= mainDoubleClickMs) {
+                mainButtonState.lastShortPressAt = 0;
+                setOverlayLatch(true);
+                return;
+            }
+            mainButtonState.lastShortPressAt = now;
             return;
         default:
             break;
     }
     // While overlay is active, only handle encoder button presses 0..7
-    if (overlayActive) {
+    if (overlayState.active) {
         if (ev.type === "encoder/press" && ev.down && ev.id >= 0 && ev.id <= 7) {
             const s = ev.id;
             focusedSlot = s;
@@ -407,7 +435,7 @@ osc.onMessage((path, args) => {
         if (slot !== undefined) {
             focusedSlot = slot;
             pm.focus(slot);
-            if (overlayActive)
+            if (overlayState.active)
                 paintOverlay();
         }
         return;
@@ -423,15 +451,8 @@ osc.onMessage((path, args) => {
         const slot = slotFromLabel(m[1]);
         if (slot !== undefined) {
             const sub = `/` + m[2]; // pass the remainder to the page
-            if ((sub === "/config/encoderColors" ||
-                sub === "/config/encoderColor" ||
-                sub === "/dump") &&
-                slotPageNames[slot] !== "Basic") {
-                const label = slotLabel(slot);
-                console.warn(`[OSC] Slot ${label} (${slotPageNames[slot]}) does not support ${sub}`);
-                return;
-            }
-            pm.routeOscToPage(slot, sub, args);
+            if (allowBasicOnlyRoute(slot, sub))
+                pm.routeOscToPage(slot, sub, args);
         }
         return;
     }
@@ -450,7 +471,7 @@ async function rebuildIoAndSplash(pm) {
     midiIo.onMessage((msg) => dec.pushRaw(msg));
     await runRandomSplash(rec);
     settleFocused(pm, rec);
-    if (overlayActive)
+    if (overlayState.active)
         paintOverlay();
 }
 function startTwisterWatcher(pm) {

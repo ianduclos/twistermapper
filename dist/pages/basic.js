@@ -4,7 +4,7 @@ Spec: /src/Architecture.md — section "BasicPage (reference page)" and "OSC"
 Acceptance Criteria:
 - Internal: 16 integer values 0..127; default 0.
 - onEvent('encoder/turn'): vals[id] += delta * (128 / ctx.resolution); clamp 0..127.
-- onEvent('encoder/press'): while down => ledBrightness=10 for that encoder; on release => restore 5.
+- onEvent('encoder/press'): while down => ledBrightness=max (29) for that encoder; on release => restore resting brightness.
 - render(): returns LedFrame if any state changed since last render; otherwise undefined.
 - OSC out: on value change, send `/twister_out/page_a {id} {normalized float <= 5 dp}` (use ctx.osc.send).
 - Optional OSC in: `/twister_in/page_a/set/{id} {normalized float}` sets value (clamped).
@@ -26,6 +26,10 @@ export function BasicPage(config) {
     const initialColorSource = config?.encoderColors;
     const initialBrightnessSource = config?.encoderBrightness;
     let dirty = true;
+    let ctxRef = null;
+    const emitPageType = (ctx) => {
+        ctx.osc.send(`/twister_out/page_${ctx.slotLabel}/type`, "Basic");
+    };
     const clampColor = (value) => {
         if (typeof value === "number" && Number.isFinite(value)) {
             return clamp(Math.round(value), COLOR_MIN, COLOR_MAX);
@@ -97,14 +101,17 @@ export function BasicPage(config) {
         return out;
     };
     return {
-        init() {
+        init(ctx) {
+            ctxRef = ctx;
+            emitPageType(ctx);
             for (let i = 0; i < 16; i++)
                 vals[i] = 0;
             applyEncoderColors(initialColorSource);
             applyEncoderBrightness(initialBrightnessSource);
             dirty = true;
         },
-        onFocus() {
+        onFocus(ctx) {
+            emitPageType(ctx);
             dirty = true;
         },
         onBlur() { },
@@ -118,6 +125,7 @@ export function BasicPage(config) {
             }
             if (ev.type === "encoder/press") {
                 pressed[ev.id] = ev.down;
+                ctx.osc.send(`/twister_out/page_${ctx.slotLabel}/press`, ev.id, ev.down ? 1 : 0);
                 dirty = true;
             }
         },
@@ -162,6 +170,8 @@ export function BasicPage(config) {
             dirty = false;
             return frame();
         },
-        dispose() { },
+        dispose() {
+            ctxRef = null;
+        },
     };
 }
