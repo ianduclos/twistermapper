@@ -6,8 +6,8 @@ Acceptance Criteria:
 - onEvent('encoder/turn'): vals[id] += delta * (128 / ctx.resolution); clamp 0..127.
 - onEvent('encoder/press'): while down => ledBrightness=10 for that encoder; on release => restore 5.
 - render(): returns LedFrame if any state changed since last render; otherwise undefined.
-- OSC out: on value change, send `/twister_out/slot_a {id} {normalized float <= 5 dp}` (use ctx.osc.send).
-- Optional OSC in: `/twister_in/slot_a/set/{id} {normalized float}` sets value (clamped).
+- OSC out: on value change, send `/twister_out/page_a {id} {normalized float <= 5 dp}` (use ctx.osc.send).
+- Optional OSC in: `/twister_in/page_a/set/{id} {normalized float}` sets value (clamped).
 - Do not import MIDI here; only express desired LED state.
 */
 import { clamp, toFixedN, to127 } from "../util/scale.js";
@@ -42,8 +42,8 @@ export function BasicPage() {
             if (ev.type === "encoder/turn") {
                 const step = 128 / ctx.resolution;
                 vals[ev.id] = clamp(vals[ev.id] + Math.round(ev.delta * step), 0, 127);
-                // OSC out: /twister_out/slot_{a|b|c|d} {id} {0..1}
-                ctx.osc.send(`/twister_out/slot_${ctx.slotLabel}`, ev.id, toFixedN(vals[ev.id] / 127, 5));
+                // OSC out: /twister_out/page_{a..h} {id} {0..1}
+                ctx.osc.send(`/twister_out/page_${ctx.slotLabel}`, ev.id, toFixedN(vals[ev.id] / 127, 5));
                 dirty = true;
             }
             if (ev.type === "encoder/press") {
@@ -52,7 +52,7 @@ export function BasicPage() {
             }
         },
         onOsc(path, args, ctx) {
-            // /twister_in/slot_{x}/set/{id} {normFloat}
+            // /twister_in/page_{x}/set/{id} {normFloat}
             const m = path.match(/\/set\/(\d{1,2})$/);
             if (m) {
                 const id = Number(m[1]) | 0;
@@ -60,7 +60,7 @@ export function BasicPage() {
                 if (id >= 0 && id < 16 && Number.isFinite(v)) {
                     vals[id] = clamp(Math.round(v * 127), 0, 127);
                     // Also emit OSC out so external clients see the update
-                    ctx.osc.send(`/twister_out/slot_${ctx.slotLabel}`, id, toFixedN(vals[id] / 127, 5));
+                    ctx.osc.send(`/twister_out/page_${ctx.slotLabel}`, id, toFixedN(vals[id] / 127, 5));
                     dirty = true;
                 }
             }

@@ -58,8 +58,8 @@ export interface Page {
 	dispose(): void
 }
 
-export type Slot = 0 | 1 | 2 | 3
-export type SlotLabel = "a" | "b" | "c" | "d"
+export type Slot = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
+export type SlotLabel = "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h"
 
 export type OnFrameReason = "event" | "osc" | "dirty" | "focus"
 

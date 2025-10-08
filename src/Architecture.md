@@ -8,7 +8,7 @@ We currently ship two page prototypes: BasicPage (16 normalized values with dire
 
 Goal
 
-Headless Node.js app that decouples input deltas from LED feedback, with 4 loadable pages (A–D). The app drives a physical MIDI Fighter Twister and talks OSC. No UI.
+Headless Node.js app that decouples input deltas from LED feedback, with 8 loadable pages (A–H). The app drives a physical MIDI Fighter Twister and talks OSC. No UI.
 
 Environment & build
 • Node + TypeScript (NodeNext ESM).
@@ -52,15 +52,15 @@ Delta policy
 OSC
 
 Out (page-specific):
-• /\*_ twister*out / page*{a|b|c|d} _/ <encId 0..15> <valueNormalized 0..1>
+• /\*_ twister*out / page*{a|b|c|d|e|f|g|h} _/ <encId 0..15> <valueNormalized 0..1>
 • Example (BasicPage): /twister_out/page_a 1 0.77380 (≤ 5 decimals).
 
 In (core):
-• /twister_in/focus {a|b|c|d | 0|1|2|3} → focus page by letter or index.
+• /twister_in/focus {a|b|c|d|e|f|g|h | 0|1|2|3|4|5|6|7} → focus page by letter or index.
 • /twister_in/clock 1 → reserved; no clock logic yet.
 
 In (page):
-• /twister*in/page*{a|b|c|d}/set <encId> <normalized> → set internal value (page decides if it’s allowed; e.g., GesturePage only in standby).
+• /twister*in/page*{a|b|c|d|e|f|g|h}/set <encId> <normalized> → set internal value (page decides if it’s allowed; e.g., GesturePage only in standby).
 
 OSC numeric rules:
 • Floats emitted with max 5 decimals.
@@ -97,7 +97,7 @@ GesturePage (record / playback looper)
 
 Main overlay (page focus selector)
 • Invoked while holding the lower right “main” button; latch by pressing with upper right shift, release (unlatch) by pressing main again (on release).
-• Shows 4 selectors (encoders 0–3) for pages A–D with distinct colors; the focused slot is shown at full brightness. Pressing a selector focuses that page.
+• Shows 8 selectors (encoders 0–7) for pages A–H with distinct colors; the focused slot is shown at full brightness. Pressing a selector focuses that page.
 • While the overlay is up, route encoder/press events to the overlay; on exit, return to normal page routing.
 
 ⸻
@@ -184,4 +184,4 @@ Known-good behaviors to preserve
 Out of scope for now (future ideas)
 • Hot-plug watcher to re-run splash on USB reconnect.
 • Full state sync at startup (Max → Node) via /twister_in/state … and /twister_out/state_ack.
-• More page types (sequencers, LFOs), pagination beyond A–D.
+• More page types (sequencers, LFOs), pagination beyond A–H.

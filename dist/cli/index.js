@@ -4,7 +4,6 @@ import { NodeMidiDriver } from "../io/midiDriver.js"; // real driver from Codex 
 import { LedReconciler } from "../render/ledReconciler.js";
 import { PageManager } from "../core/pageManager.js";
 import { BasicPage } from "../pages/basic.js";
-import { GesturePage } from "../pages/gestures.js";
 import { createInputDecoder } from "../io/inputDecoder.js";
 import { createOsc } from "../io/osc.js";
 import { runRandomSplash, settleFocused } from "../boot/bootSplashes.js";
@@ -41,13 +40,49 @@ let overlayActive = false;
 let overlayLatched = false;
 let pendingUnlock = false; // set when main pressed without shift while latched
 // Slot colors (use your config if you prefer)
+const SLOT_LABELS = [
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+    "f",
+    "g",
+    "h",
+];
+const SLOTS = [0, 1, 2, 3, 4, 5, 6, 7];
 const SLOT_COLOR = {
     0: 110, // purple
     1: 1, // blue
     2: 60, // green
     3: 66, // yellow
+    4: 74, // orange
+    5: 80, // red
+    6: 33, // cyan
+    7: 20, // magenta-ish
 };
-const SLOTS = [0, 1, 2, 3];
+const slotFromLabel = (label) => {
+    const lower = label.toLowerCase();
+    const idx = SLOT_LABELS.findIndex((l) => l === lower);
+    if (idx === -1)
+        return undefined;
+    const slot = SLOTS[idx];
+    return slot === undefined ? undefined : slot;
+};
+const parseSlotInput = (value) => {
+    if (typeof value === "number" && Number.isInteger(value)) {
+        const idx = value;
+        return idx >= 0 && idx < SLOTS.length ? SLOTS[idx] : undefined;
+    }
+    if (typeof value === "string") {
+        const lower = value.toLowerCase();
+        if (/^\d+$/.test(lower)) {
+            return parseSlotInput(Number(lower));
+        }
+        return slotFromLabel(lower);
+    }
+    return undefined;
+};
 function renderOverlay(focus) {
     const mk = (o = {}) => ({
         ring: 0,
@@ -89,10 +124,9 @@ const pm = new PageManager(baseCtx, (frame, reason) => {
 // Load & focus slot A (and remember which)
 void (async () => {
     await runRandomSplash(rec);
-    pm.load(0, BasicPage);
-    pm.load(1, GesturePage);
-    pm.load(2, BasicPage);
-    pm.load(3, GesturePage);
+    for (const slot of SLOTS) {
+        pm.load(slot, BasicPage);
+    }
     pm.focus(0);
     settleFocused(pm, rec);
     startTwisterWatcher(pm);
@@ -159,7 +193,7 @@ dec.onEvent((ev) => {
     }
     // While overlay is active, only handle encoder button presses 0..3
     if (overlayActive) {
-        if (ev.type === "encoder/press" && ev.down && ev.id >= 0 && ev.id <= 3) {
+        if (ev.type === "encoder/press" && ev.down && ev.id >= 0 && ev.id <= 7) {
             const s = ev.id;
             focusedSlot = s;
             pm.focus(s);
@@ -179,11 +213,15 @@ midiIo.onMessage((msg) => dec.pushRaw(msg));
 console.log('Daemon up. Using port "Midi Fighter Twister". Twist & press to test.');
 // OSC input → core routes
 osc.onMessage((path, args) => {
-    // /twister_in/focus 0..3
+    // /twister_in/focus {0..7 | a..h}
     if (path === "/twister_in/focus") {
-        const s = Number(args[0]);
-        if (s >= 0 && s <= 3)
-            pm.focus(s);
+        const slot = parseSlotInput(args[0]);
+        if (slot !== undefined) {
+            focusedSlot = slot;
+            pm.focus(slot);
+            if (overlayActive)
+                paintOverlay();
+        }
         return;
     }
     // /twister_in/clock 1   (reserved; no clock logic yet)
@@ -191,18 +229,19 @@ osc.onMessage((path, args) => {
         // you could fan this out to pages later
         return;
     }
-    // /twister_in/slot_{a|b|c|d}/...
-    const m = path.match(/^\/twister_in\/slot_([abcd])\/(.+)$/);
+    // /twister_in/page_{a|...|h}/...
+    const m = path.match(/^\/twister_in\/page_([a-hA-H])\/(.+)$/);
     if (m) {
-        const letter = m[1];
-        const slot = (letter === "a" ? 0 : letter === "b" ? 1 : letter === "c" ? 2 : 3);
-        const sub = `/` + m[2]; // pass the remainder to the page
-        pm.routeOscToPage(slot, sub, args);
+        const slot = slotFromLabel(m[1]);
+        if (slot !== undefined) {
+            const sub = `/` + m[2]; // pass the remainder to the page
+            pm.routeOscToPage(slot, sub, args);
+        }
         return;
     }
 });
 console.log("Daemon up: MIDI+OSC live. In: 57121  Out: 57120");
-console.log("Try: focus → /twister_in/focus 0   | set → /twister_in/slot_a/set/0 0.5");
+console.log("Try: focus → /twister_in/focus a   | set → /twister_in/page_a/set/0 0.5");
 async function rebuildIoAndSplash(pm) {
     try {
         midiIo.close();

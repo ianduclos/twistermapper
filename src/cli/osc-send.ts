@@ -29,7 +29,7 @@ udp.on("ready", () => {
 	// Focus slot A (0)
 	msg("/twister_in/focus", 0)
 	// Set encoder 0 to 0.75 on BasicPage
-	msg("/twister_in/slot_a/set/0", 0.75)
+	msg("/twister_in/page_a/set/0", 0.75)
 
 	setTimeout(() => udp.close(), 100)
 })

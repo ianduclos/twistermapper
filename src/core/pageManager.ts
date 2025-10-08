@@ -20,18 +20,16 @@ import {
 	OnFrame,
 } from "./types.js"
 
-const SLOTS: readonly Slot[] = [0, 1, 2, 3] as const
-const LABELS: readonly SlotLabel[] = ["a", "b", "c", "d"] as const
+const SLOTS: readonly Slot[] = [0, 1, 2, 3, 4, 5, 6, 7] as const
+const LABELS: readonly SlotLabel[] = ["a", "b", "c", "d", "e", "f", "g", "h"] as const
 
 export class PageManager {
-	private pages: (Page | null)[] = [null, null, null, null]
-	private desired: (LedFrame | undefined)[] = [
-		undefined,
-		undefined,
-		undefined,
-		undefined,
-	]
-	private focused: 0 | 1 | 2 | 3 = 0
+	private pages: (Page | null)[] = Array.from({ length: SLOTS.length }, () => null)
+	private desired: (LedFrame | undefined)[] = Array.from(
+		{ length: SLOTS.length },
+		() => undefined
+	)
+	private focused: Slot = 0
 
 	// We keep a separate ctx per slot so setDirty knows who called.
 	private ctxPerSlot: PageContext[] = []
@@ -60,7 +58,7 @@ export class PageManager {
 		}
 	}
 
-	load(slot: 0 | 1 | 2 | 3, factory: () => Page) {
+	load(slot: Slot, factory: () => Page) {
 		this.pages[slot]?.dispose()
 		const p = factory()
 		this.pages[slot] = p
@@ -71,7 +69,7 @@ export class PageManager {
 			this.onFrame(this.desired[slot], "event")
 	}
 
-	focus(slot: 0 | 1 | 2 | 3) {
+	focus(slot: Slot) {
 		if (slot === this.focused) return
 		this.pages[this.focused]?.onBlur(this.ctxPerSlot[this.focused])
 		this.focused = slot
@@ -89,7 +87,7 @@ export class PageManager {
 		if (this.onFrame) this.onFrame(this.desired[this.focused], "event")
 	}
 
-	routeOscToPage(slot: 0 | 1 | 2 | 3, path: string, args: any[]) {
+	routeOscToPage(slot: Slot, path: string, args: any[]) {
 		const p = this.pages[slot]
 		if (!p?.onOsc) return
 		p.onOsc(path, args, this.ctxPerSlot[slot])

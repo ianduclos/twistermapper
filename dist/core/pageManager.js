@@ -9,16 +9,11 @@ Acceptance Criteria:
 - getDesiredFocused(): returns latest LedFrame | undefined.
 - Keep ctx reference as provided; do not mutate ctx shape.
 */
-const SLOTS = [0, 1, 2, 3];
-const LABELS = ["a", "b", "c", "d"];
+const SLOTS = [0, 1, 2, 3, 4, 5, 6, 7];
+const LABELS = ["a", "b", "c", "d", "e", "f", "g", "h"];
 export class PageManager {
-    pages = [null, null, null, null];
-    desired = [
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-    ];
+    pages = Array.from({ length: SLOTS.length }, () => null);
+    desired = Array.from({ length: SLOTS.length }, () => undefined);
     focused = 0;
     // We keep a separate ctx per slot so setDirty knows who called.
     ctxPerSlot = [];
