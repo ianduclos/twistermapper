@@ -6,35 +6,32 @@ Acceptance Criteria:
 - onEvent('encoder/turn'): vals[id] += delta * (128 / ctx.resolution); clamp 0..127.
 - onEvent('encoder/press'): while down => ledBrightness=10 for that encoder; on release => restore 5.
 - render(): returns LedFrame if any state changed since last render; otherwise undefined.
-- OSC out: on value change, send `/twister_out/slot_a/{id} {normalized float <= 5 dp}` (use ctx.osc.send).
+- OSC out: on value change, send `/twister_out/slot_a {id} {normalized float <= 5 dp}` (use ctx.osc.send).
 - Optional OSC in: `/twister_in/slot_a/set/{id} {normalized float}` sets value (clamped).
 - Do not import MIDI here; only express desired LED state.
 */
-import { clamp, toFixedN } from "../util/scale.js";
+import { clamp, toFixedN, to127 } from "../util/scale.js";
 export function BasicPage() {
-    const vals = new Uint8Array(16);
+    const vals = new Int16Array(16); // 0..127
     const pressed = new Array(16).fill(false);
     let dirty = true;
     const frame = () => {
         const out = {};
         for (let i = 0; i < 16; i++) {
-            const enc = i;
-            out[enc] = {
-                ring: vals[i],
+            out[i] = {
+                ring: to127(vals[i]),
                 rgb: 110,
                 ledBrightness: pressed[i] ? 10 : 5,
-                ringBrightness: 31, // full indicator brightness (human)
+                ringBrightness: 31,
                 anim: "none",
             };
         }
         return out;
     };
     return {
-        init(ctx) {
-            for (let i = 0; i < 16; i++) {
+        init() {
+            for (let i = 0; i < 16; i++)
                 vals[i] = 0;
-                pressed[i] = false;
-            }
             dirty = true;
         },
         onFocus() {
@@ -44,40 +41,31 @@ export function BasicPage() {
         onEvent(ev, ctx) {
             if (ev.type === "encoder/turn") {
                 const step = 128 / ctx.resolution;
-                const prev = vals[ev.id];
-                const delta = Math.round(ev.delta * step);
-                if (delta !== 0) {
-                    const next = clamp(prev + delta, 0, 127);
-                    if (next !== prev) {
-                        vals[ev.id] = next;
-                        dirty = true;
-                        ctx.osc.send(`/twister_out/slot_a/${ev.id}`, toFixedN(next / 127, 5));
-                    }
-                }
+                vals[ev.id] = clamp(vals[ev.id] + Math.round(ev.delta * step), 0, 127);
+                // OSC out: /twister_out/slot_{a|b|c|d} {id} {0..1}
+                ctx.osc.send(`/twister_out/slot_${ctx.slotLabel}`, ev.id, toFixedN(vals[ev.id] / 127, 5));
+                dirty = true;
             }
             if (ev.type === "encoder/press") {
-                if (pressed[ev.id] !== ev.down) {
-                    pressed[ev.id] = ev.down;
-                    dirty = true;
-                }
+                pressed[ev.id] = ev.down;
+                dirty = true;
             }
         },
         onOsc(path, args, ctx) {
-            // Optional: /twister_in/slot_a/set/{id} {normFloat}
+            // /twister_in/slot_{x}/set/{id} {normFloat}
             const m = path.match(/\/set\/(\d{1,2})$/);
             if (m) {
                 const id = Number(m[1]) | 0;
                 const v = Number(args[0]);
                 if (id >= 0 && id < 16 && Number.isFinite(v)) {
-                    const next = clamp(Math.round(v * 127), 0, 127);
-                    if (vals[id] !== next) {
-                        vals[id] = next;
-                        dirty = true;
-                    }
+                    vals[id] = clamp(Math.round(v * 127), 0, 127);
+                    // Also emit OSC out so external clients see the update
+                    ctx.osc.send(`/twister_out/slot_${ctx.slotLabel}`, id, toFixedN(vals[id] / 127, 5));
+                    dirty = true;
                 }
             }
         },
-        render(ctx) {
+        render() {
             if (!dirty)
                 return;
             dirty = false;

@@ -1,4 +1,5 @@
 // src/cli/index.ts
+import midiLib from "@julusian/midi"
 import { NodeMidiDriver } from "../io/midiDriver.js" // real driver from Codex task
 import { LedReconciler } from "../render/ledReconciler.js"
 import { PageManager } from "../core/pageManager.js"
@@ -25,11 +26,11 @@ const inSel = arg("--in") ?? process.env.TWISTER_IN ?? "twister"
 const outSel = arg("--out") ?? process.env.TWISTER_OUT ?? "twister"
 
 // ---- MIDI in/out + reconciler ----
-const midi = new NodeMidiDriver()
-console.log("MIDI IN :", midi.getInPortName?.() ?? "(unknown)")
-console.log("MIDI OUT:", midi.getOutPortName?.() ?? "(unknown)")
+let midiIo = new NodeMidiDriver()
+console.log("MIDI IN :", midiIo.getInPortName?.() ?? "(unknown)")
+console.log("MIDI OUT:", midiIo.getOutPortName?.() ?? "(unknown)")
 
-const rec = new LedReconciler(midi)
+let rec = new LedReconciler(midiIo)
 
 // --- OSC transport (defaults: in 57121, out 57120) ---
 const osc = createOsc()
@@ -124,6 +125,7 @@ void (async () => {
 	pm.load(3 as Slot, GesturePage)
 	pm.focus(0 as Slot)
 	settleFocused(pm, rec)
+	startTwisterWatcher(pm)
 })()
 
 // ---- Input: decoder wiring ----
@@ -208,7 +210,7 @@ dec.onEvent((ev) => {
 })
 
 // Translate raw MIDI (from NodeMidiDriver) to decoder messages
-midi.onMessage((msg) => dec.pushRaw(msg))
+midiIo.onMessage((msg) => dec.pushRaw(msg))
 console.log(
 	'Daemon up. Using port "Midi Fighter Twister". Twist & press to test.'
 )
@@ -243,3 +245,64 @@ console.log("Daemon up: MIDI+OSC live. In: 57121  Out: 57120")
 console.log(
 	"Try: focus → /twister_in/focus 0   | set → /twister_in/slot_a/set/0 0.5"
 )
+
+async function rebuildIoAndSplash(pm: PageManager) {
+	try {
+		midiIo.close()
+	} catch {
+		// ignore close errors; device may already be gone
+	}
+	midiIo = new NodeMidiDriver()
+	rec = new LedReconciler(midiIo)
+	midiIo.onMessage((msg) => dec.pushRaw(msg))
+	await runRandomSplash(rec)
+	settleFocused(pm, rec)
+	if (overlayActive) paintOverlay()
+}
+
+function startTwisterWatcher(pm: PageManager) {
+	const intervalMs = 1500
+	const match = "midi fighter twister"
+
+	const hasTwisterOutput = (): boolean => {
+		const out = new midiLib.Output()
+		try {
+			const count = out.getPortCount()
+			for (let i = 0; i < count; i++) {
+				const name = out.getPortName(i)
+				if (name.toLowerCase().includes(match)) return true
+			}
+			return false
+		} catch {
+			return false
+		} finally {
+			try {
+				out.closePort()
+			} catch {
+				// nothing was opened
+			}
+		}
+	}
+
+	let previousPresent = hasTwisterOutput()
+	let pollInFlight = false
+
+	const check = async () => {
+		if (pollInFlight) return
+		pollInFlight = true
+		try {
+			const present = hasTwisterOutput()
+			if (!previousPresent && present) {
+				console.log("[Hotplug] Twister reconnected → splash")
+				await rebuildIoAndSplash(pm)
+			}
+			previousPresent = present
+		} finally {
+			pollInFlight = false
+		}
+	}
+
+	setInterval(() => {
+		void check()
+	}, intervalMs)
+}

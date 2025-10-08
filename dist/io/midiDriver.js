@@ -25,28 +25,31 @@ Acceptance Criteria:
    - Do not change existing interfaces (MidiOut, MidiIn).
    - No global state; allow multiple instances.
 */
-import { readFileSync } from "node:fs";
-import { isAbsolute, resolve as resolvePath } from "node:path";
-import midi from "@julusian/midi";
-import deviceMap from "../config/device-map.json" with { type: "json" };
+// src/io/midiDriver.ts
+import { readFileSync } from 'node:fs';
+import { isAbsolute, resolve as resolvePath } from 'node:path';
+import midi from '@julusian/midi';
+import deviceMap from '../config/device-map.json' with { type: 'json' };
+const DEFAULT_DEVICE_NAME = 'Midi Fighter Twister';
+const DEBUG = process.env.TWISTER_DEBUG === '1';
 export class NodeMidiDriver {
     input;
     output;
     subscribers = [];
     map;
-    inPortName = "";
-    outPortName = "";
+    inPortName = '';
+    outPortName = '';
     constructor(opts = {}) {
-        this.map = opts.deviceMapPath
-            ? this.loadDeviceMap(opts.deviceMapPath)
-            : deviceMap;
+        this.map = opts.deviceMapPath ? this.loadDeviceMap(opts.deviceMapPath) : deviceMap;
         this.input = new midi.Input();
         this.output = new midi.Output();
-        const inInfo = this.openPort(this.input, opts.inPort, "input");
-        const outInfo = this.openPort(this.output, opts.outPort, "output");
+        // Optional: drop timing/active sensing noise
+        // this.input.ignoreTypes(true, true, true);
+        const inInfo = this.openPort(this.input, opts.inPort ?? DEFAULT_DEVICE_NAME, 'input');
+        const outInfo = this.openPort(this.output, opts.outPort ?? DEFAULT_DEVICE_NAME, 'output');
         this.inPortName = inInfo.name;
         this.outPortName = outInfo.name;
-        this.input.on("message", (_delta, message) => {
+        this.input.on('message', (_delta, message) => {
             const parsed = this.parseMessage(message);
             if (!parsed)
                 return;
@@ -54,52 +57,44 @@ export class NodeMidiDriver {
                 cb(parsed);
         });
     }
-    onMessage(cb) {
-        this.subscribers.push(cb);
-    }
+    // ---- MidiIn ----
+    onMessage(cb) { this.subscribers.push(cb); }
+    getInPortName() { return this.inPortName; }
+    getOutPortName() { return this.outPortName; }
+    // ---- MidiOut (Twister mappings) ----
     setRing(enc, value0_127) {
-        const channel = this.map.output.ringLevel.channel;
-        this.sendCc(channel, enc, clamp(value0_127, 0, 127));
+        const ch = this.map.output.ringLevel.channel; // 0
+        this.sendCc(ch, enc, clamp(value0_127, 0, 127));
     }
     setRGB(enc, colorIdx1_126) {
-        const channel = this.map.output.rgbColor.channel;
-        this.sendNote(channel, enc, clamp(colorIdx1_126, 1, 126));
+        const ch = this.map.output.rgbColor.channel; // 2
+        this.sendNote(ch, enc, clamp(colorIdx1_126, 1, 126)); // velocity as color
     }
     setLedBrightness(enc, human0_29) {
-        const channel = this.map.output.ledBrightness.channel;
-        const deviceValue = 18 + clamp(human0_29, 0, 29);
-        this.sendCc(channel, enc, deviceValue);
+        const ch = this.map.output.ledBrightness.channel; // 3
+        const val = 18 + clamp(human0_29, 0, 29); // 18..47
+        // controller number = encoder index, value = brightness code
+        this.sendCc(ch, enc, val);
     }
     setRingBrightness(enc, human1_31) {
-        const channel = this.map.output.ringBrightness.channel;
-        const deviceValue = 64 + clamp(human1_31, 1, 31);
-        this.sendCc(channel, enc, deviceValue);
+        const ch = this.map.output.ringBrightness.channel; // 3
+        const val = 64 + clamp(human1_31, 1, 31); // 65..95
+        this.sendCc(ch, enc, val);
     }
     setPulse(enc) {
-        const { channel, value } = this.map.output.pulseAnimation;
+        const { channel, value } = this.map.output.pulseAnimation; // 3 / 13
         this.sendCc(channel, enc, clamp(value ?? 13, 0, 127));
     }
-    getInPortName() {
-        return this.inPortName;
-    }
-    getOutPortName() {
-        return this.outPortName;
-    }
+    // ---- internals ----
     loadDeviceMap(path) {
         const resolved = isAbsolute(path) ? path : resolvePath(process.cwd(), path);
-        try {
-            const json = readFileSync(resolved, "utf8");
-            return JSON.parse(json);
-        }
-        catch (err) {
-            throw new Error(`Failed to load device map at ${path}: ${err.message}`);
-        }
+        const json = readFileSync(resolved, 'utf8');
+        return JSON.parse(json);
     }
     openPort(io, spec, kind) {
         const names = this.listPorts(io);
-        if (!names.length) {
+        if (!names.length)
             throw new Error(`No ${kind} MIDI ports available.`);
-        }
         const { index, name } = this.resolvePort(names, spec, kind);
         try {
             io.openPort(index);
@@ -112,56 +107,75 @@ export class NodeMidiDriver {
     listPorts(io) {
         const count = io.getPortCount();
         const names = [];
-        for (let i = 0; i < count; i++) {
+        for (let i = 0; i < count; i++)
             names.push(io.getPortName(i));
-        }
         return names;
     }
     resolvePort(names, spec, kind) {
-        if (typeof spec === "number") {
+        if (typeof spec === 'number') {
             if (!Number.isInteger(spec) || spec < 0 || spec >= names.length) {
-                throw new Error(`Invalid ${kind} port index ${spec}. Available: ${names.join(", ")}`);
+                throw new Error(`Invalid ${kind} port index ${spec}. Available: ${names.join(', ')}`);
             }
             return { index: spec, name: names[spec] };
         }
-        const lowerNames = names.map((n) => n.toLowerCase());
-        if (typeof spec === "string") {
-            const target = spec.toLowerCase();
-            const idx = lowerNames.findIndex((n) => n.includes(target));
-            if (idx !== -1) {
-                return { index: idx, name: names[idx] };
-            }
-            throw new Error(`Cannot find ${kind} port containing '${spec}'. Available: ${names.join(", ")}`);
-        }
-        const defaultIdx = lowerNames.findIndex((n) => n.includes("twister"));
-        const index = defaultIdx !== -1 ? defaultIdx : 0;
-        return { index, name: names[index] };
+        const lower = names.map(n => n.toLowerCase());
+        const target = spec.toLowerCase();
+        // exact first
+        let idx = lower.findIndex(n => n === target);
+        if (idx !== -1)
+            return { index: idx, name: names[idx] };
+        // substring next
+        idx = lower.findIndex(n => n.includes(target));
+        if (idx !== -1)
+            return { index: idx, name: names[idx] };
+        // fallback: prefer exact DEFAULT_DEVICE_NAME, then substring, else first
+        const want = DEFAULT_DEVICE_NAME.toLowerCase();
+        idx = lower.findIndex(n => n === want);
+        if (idx !== -1)
+            return { index: idx, name: names[idx] };
+        idx = lower.findIndex(n => n.includes(want));
+        if (idx !== -1)
+            return { index: idx, name: names[idx] };
+        return { index: 0, name: names[0] };
     }
     parseMessage(message) {
         if (!message.length)
             return null;
         const status = message[0] ?? 0;
-        const typeNibble = status & 0xf0;
-        const channel = status & 0x0f;
+        const typeNibble = status & 0xF0;
+        const channel = status & 0x0F;
         const number = message[1] ?? 0;
         const value = message[2] ?? 0;
-        if (typeNibble === 0xb0) {
-            return { type: "cc", channel, number, value };
-        }
-        if (typeNibble === 0x90 || typeNibble === 0x80) {
-            return { type: "note", channel, number, value };
-        }
+        if (typeNibble === 0xB0)
+            return { type: 'cc', channel, number, value };
+        if (typeNibble === 0x90 || typeNibble === 0x80)
+            return { type: 'note', channel, number, value };
         return null;
     }
     sendCc(channel, controller, value) {
-        this.sendMessage(0xb0, channel, controller, value);
+        this.sendMessage(0xB0, channel, controller, value);
     }
     sendNote(channel, note, velocity) {
         this.sendMessage(0x90, channel, note, velocity);
     }
     sendMessage(status, channel, data1, data2) {
-        const statusByte = (status & 0xf0) | (channel & 0x0f);
-        this.output.sendMessage([statusByte, data1 & 0x7f, data2 & 0x7f]);
+        const statusByte = (status & 0xF0) | (channel & 0x0F);
+        if (DEBUG) {
+            const kind = (statusByte & 0xF0) === 0xB0 ? 'CC' : ((statusByte & 0xF0) === 0x90 ? 'NOTE' : '??');
+            // eslint-disable-next-line no-console
+            console.log(`[MIDI→] ${kind} ch=${channel} d1=${data1} d2=${data2}`);
+        }
+        this.output.sendMessage([statusByte, data1 & 0x7F, data2 & 0x7F]);
+    }
+    close() {
+        try {
+            this.input.closePort();
+        }
+        catch { }
+        try {
+            this.output.closePort();
+        }
+        catch { }
     }
 }
 // Temporary no-op so the app runs without device libs:

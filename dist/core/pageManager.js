@@ -9,6 +9,8 @@ Acceptance Criteria:
 - getDesiredFocused(): returns latest LedFrame | undefined.
 - Keep ctx reference as provided; do not mutate ctx shape.
 */
+const SLOTS = [0, 1, 2, 3];
+const LABELS = ["a", "b", "c", "d"];
 export class PageManager {
     pages = [null, null, null, null];
     desired = [
@@ -23,10 +25,11 @@ export class PageManager {
     onFrame;
     constructor(baseCtx, onFrame) {
         this.onFrame = onFrame;
-        // Build per-slot contexts with slot-aware setDirty
-        for (let slot = 0; slot < 4; slot = (slot + 1)) {
+        for (const slot of SLOTS) {
             this.ctxPerSlot[slot] = {
                 ...baseCtx,
+                slot,
+                slotLabel: LABELS[slot],
                 setDirty: () => {
                     const p = this.pages[slot];
                     if (!p)

@@ -127,9 +127,11 @@ export class LedReconciler {
     flush(desired) {
         if (!this.cache)
             return;
+        // Process encoders in numeric order for stable behavior
         const encoders = Array.from(this.pending.keys()).sort((a, b) => a - b);
         for (const enc of encoders) {
             const encId = enc;
+            // Check/reset the 5ms burst window
             this.ensureBurstWindow(performance.now());
             const desiredState = desired[encId];
             const pendingState = this.pending.get(enc);
@@ -137,32 +139,36 @@ export class LedReconciler {
                 this.pending.delete(enc);
                 continue;
             }
+            // --- Animation precedence: 'pulse' overrides LED brightness for THIS BURST only ---
+            // We still allow ringBrightness, RGB, and ring to update while pulsing.
+            let skipLedBrightness = false;
             if (desiredState.anim === "pulse") {
                 if (pendingState.pulse) {
+                    // Send pulse (only once when transitioning into pulse)
                     if (!this.sendWithLimits(() => this.midi.setPulse(enc)))
                         break;
                     this.cache[encId].anim = "pulse";
                     delete pendingState.pulse;
                 }
-                if (!hasPendingWork(pendingState)) {
-                    this.pending.delete(enc);
-                }
-                continue;
+                // While in pulse, don't send setLedBrightness this burst
+                skipLedBrightness = true;
             }
-            // ledBrightness (force first to cancel pulse)
-            if (pendingState.ledBrightness) {
+            // If we are leaving pulse, push() has already marked ledBrightness.force=true,
+            // so the brightness send below will also clear anim->'none' immediately.
+            // --- Flush order per encoder: ledBrightness -> ringBrightness -> rgb -> ring ---
+            // 1) LED brightness (unless suppressed by pulse this burst)
+            if (!skipLedBrightness && pendingState.ledBrightness) {
                 const { value, force } = pendingState.ledBrightness;
                 if (force || this.cache[encId].ledBrightness !== value) {
                     if (!this.sendWithLimits(() => this.midi.setLedBrightness(enc, value)))
                         break;
                     this.cache[encId].ledBrightness = value;
+                    // Leaving pulse is handled by forcing brightness; ensure cache anim reflects that
                     this.cache[encId].anim = "none";
-                    delete pendingState.ledBrightness;
                 }
-                else {
-                    delete pendingState.ledBrightness;
-                }
+                delete pendingState.ledBrightness;
             }
+            // 2) Ring brightness
             if (pendingState.ringBrightness !== undefined) {
                 const value = pendingState.ringBrightness;
                 if (this.cache[encId].ringBrightness !== value) {
@@ -172,6 +178,7 @@ export class LedReconciler {
                 }
                 delete pendingState.ringBrightness;
             }
+            // 3) RGB color
             if (pendingState.rgb !== undefined) {
                 const value = pendingState.rgb;
                 if (this.cache[encId].rgb !== value) {
@@ -181,6 +188,7 @@ export class LedReconciler {
                 }
                 delete pendingState.rgb;
             }
+            // 4) Ring level
             if (pendingState.ring !== undefined) {
                 const value = pendingState.ring;
                 if (this.cache[encId].ring !== value) {
@@ -190,6 +198,7 @@ export class LedReconciler {
                 }
                 delete pendingState.ring;
             }
+            // Clean up if nothing left for this encoder
             if (!hasPendingWork(pendingState)) {
                 this.pending.delete(enc);
             }

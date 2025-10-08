@@ -1,4 +1,3 @@
-export {};
 /* Task: Implement OSC I/O (udp)
 Spec: /src/Architecture.md — "OSC"
 
@@ -11,3 +10,71 @@ Acceptance Criteria:
 - send: serialize to OSC and send to remote.
 - No globals; safe to instantiate once from the daemon and pass ctx.osc to pages.
 */
+// src/io/osc.ts
+import { toFixedN } from "../util/scale.js";
+// The 'osc' package often lacks TS types; keep it as any for NodeNext ESM.
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import osc from "osc";
+export function createOsc(opts) {
+    const udpPort = new osc.UDPPort({
+        localAddress: opts?.localAddress ?? "0.0.0.0",
+        localPort: opts?.localPort ?? 57121,
+        remoteAddress: opts?.remoteAddress ?? "127.0.0.1",
+        remotePort: opts?.remotePort ?? 57120,
+        metadata: true, // explicit types
+    });
+    let ready = false;
+    const queue = [];
+    udpPort.on("ready", () => {
+        ready = true;
+        // flush any queued sends
+        while (queue.length) {
+            const m = queue.shift();
+            udpPort.send(m); // ✅ DO NOT pass the address here
+        }
+    });
+    udpPort.on("error", (err) => {
+        // optional: add your own logger
+        console.error("[OSC] UDP error:", err);
+    });
+    // Normalize args to OSC metadata
+    const buildArgs = (args) => args.map((a) => {
+        if (typeof a === "boolean")
+            return { type: a ? "T" : "F" };
+        if (typeof a === "number") {
+            if (Number.isInteger(a))
+                return { type: "i", value: a | 0 };
+            return { type: "f", value: toFixedN(a, 5) };
+        }
+        return { type: "s", value: String(a) };
+    });
+    const send = (path, ...args) => {
+        const msg = { address: path, args: buildArgs(args) };
+        if (!ready) {
+            queue.push(msg);
+            return;
+        }
+        udpPort.send(msg); // ✅ DO NOT pass the path here
+    };
+    const onMessage = (cb) => {
+        udpPort.on("message", (m) => {
+            const args = (m.args ?? []).map((a) => {
+                if (a.type === "T")
+                    return true;
+                if (a.type === "F")
+                    return false;
+                return a.value ?? a; // i,f,s…
+            });
+            cb(m.address, args);
+        });
+    };
+    const close = () => {
+        try {
+            udpPort.close();
+        }
+        catch { }
+    };
+    udpPort.open();
+    return { send, onMessage, close };
+}
