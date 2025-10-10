@@ -10,8 +10,8 @@ This project renders the MIDI Fighter Twister headlessly. Page prototypes define
 - Create `src/pages/<name>.ts` that exports `function YourPage(): Page`.
 - Implement all lifecycle hooks required by `Page` (`init`, `onFocus`, `onBlur`, `onEvent`, `render`, `dispose`).
 - Use `ctx.osc.send` for all outward OSC traffic. Clamp numeric values with helpers in `src/util/scale.ts`.
-- Provide a unique `type` message by emitting `/twister_out/page_${ctx.slotLabel}/type <YourType>` in `init` and `onFocus` (mirroring Basic/Gesture).
-- Ensure encoder button presses call `/twister_out/page_${ctx.slotLabel}/press <encId> <0|1>` if the page overrides button behaviour.
+- Provide a unique `type` message by emitting `/twister/out/page/${ctx.slotLabel}/type <YourType>` in `init` and `onFocus` (mirroring Basic/Gesture).
+- Ensure encoder button presses call `/twister/out/page/${ctx.slotLabel}/index/<encId>/press <1|0>` if the page overrides button behaviour.
 
 ## 3. Manage Internal State Thoughtfully
 - Maintain per-encoder state (values, modes, timers) so `render` can return a full `LedFrame` when dirty.
@@ -26,7 +26,7 @@ This project renders the MIDI Fighter Twister headlessly. Page prototypes define
 - Provide sensible defaults so missing config entries fallback gracefully.
 
 ## 5. Hook up OSC & Type Messages
-- Confirm `/twister_out/page_${slot}/type` fires on boot and focus (already handled in Basic/Gesture examples).
+- Confirm `/twister/out/page/${slot}/type` fires on boot and focus (already handled in Basic/Gesture examples).
 - If the page introduces new OSC routes, document them in `Architecture.md` and the README.
 
 ## 6. Test the Page

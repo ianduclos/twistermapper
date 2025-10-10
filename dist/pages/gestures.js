@@ -6,8 +6,8 @@ Spec: /src/Architecture.md
   Record   -> Red,   anim 'pulse' (brightness ignored that burst); record timeline.
   Playback -> Green, brightness 10, anim none; loop recorded gesture.
 - Cycle on encoder button press: Standby -> Record -> Playback -> Standby (clear rec).
-- OSC out on any value change: /twister_out/page_{a..h} {id} {0..1 <= 5dp}
-- OSC in (only in standby): /twister_in/page_{x}/set/{id} {normFloat}
+- OSC out on any value change: /twister/out/page_{a..h}/index/<id>/value <0..1 <= 5dp>
+- OSC in (only in standby): /twister/in/page_{x}/index/<id>/set <normFloat>
 */
 import colors from '../config/colors.json' with { type: 'json' };
 import { clamp, to127, toFixedN } from '../util/scale.js';
@@ -27,7 +27,7 @@ export function GesturePage() {
     let dirty = true;
     let ctxRef = null;
     const emitPageType = (ctx) => {
-        ctx.osc.send(`/twister_out/page_${ctx.slotLabel}/type`, 'Gesture');
+        ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/type`, 'Gesture');
     };
     const COLOR_BLUE = Number(colors.blue ?? 1);
     const COLOR_RED = Number(colors.red ?? 80);
@@ -90,7 +90,7 @@ export function GesturePage() {
         if (!ctxRef)
             return;
         const f = toFixedN(vals[i] / 127, 5);
-        ctxRef.osc.send(`/twister_out/page_${ctxRef.slotLabel}`, i, f);
+        ctxRef.osc.send(`/twister/out/page/${ctxRef.slotLabel}/index/${i}/value`, f);
     };
     // Playback interpolation at current time
     const tickPlayback = (i) => {
@@ -177,7 +177,7 @@ export function GesturePage() {
         },
         onOsc(path, args, ctx) {
             // Only accept set when in standby
-            const m = path.match(/\/set\/(\d{1,2})$/);
+            const m = path.match(/^\/index\/(\d{1,2})\/set$/);
             if (!m)
                 return;
             const idNum = Number(m[1]) | 0; // or: parseInt(m[1], 10)

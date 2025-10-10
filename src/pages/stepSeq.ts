@@ -89,15 +89,14 @@ let lastShiftTapAt = 0
 	let loopEdit: LoopEditState | null = null
 
 	const emitPageType = (ctx: PageContext) => {
-		ctx.osc.send(`/twister_out/page_${ctx.slotLabel}/type`, "StepSeq")
+		ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/type`, "StepSeq")
 	}
 
 	const emitTrackValue = (ctx: PageContext, trackId: number) => {
 		const value = tracks[trackId].steps[tracks[trackId].playhead]
 		lastOutputs[trackId] = value
 		ctx.osc.send(
-			`/twister_out/page_${ctx.slotLabel}`,
-			trackId,
+			`/twister/out/page/${ctx.slotLabel}/index/${trackId}/value`,
 			toFixedN(value / 127, 5)
 		)
 	}
@@ -365,7 +364,7 @@ const handleStepPressUp = (stepIdx: number, ctx: PageContext) => {
 			}
 		},
 		onOsc(path, args, ctx) {
-			if (path === "/twister_in/clock") {
+			if (path === "/twister/in/clock") {
 				const rawId = Number(args?.[0])
 				if (!Number.isFinite(rawId)) return
 				const clockId = ((Math.round(rawId) % 4) + 4) % 4

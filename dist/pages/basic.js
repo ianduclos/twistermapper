@@ -6,8 +6,8 @@ Acceptance Criteria:
 - onEvent('encoder/turn'): vals[id] += delta * (128 / ctx.resolution); clamp 0..127.
 - onEvent('encoder/press'): while down => ledBrightness=max (29) for that encoder; on release => restore resting brightness.
 - render(): returns LedFrame if any state changed since last render; otherwise undefined.
-- OSC out: on value change, send `/twister_out/page_a {id} {normalized float <= 5 dp}` (use ctx.osc.send).
-- Optional OSC in: `/twister_in/page_a/set/{id} {normalized float}` sets value (clamped).
+- OSC out: on value change, send `/twister/out/page_a/index/<id>/value <normalized float <= 5 dp>` (use ctx.osc.send).
+- Optional OSC in: `/twister/in/page_a/index/<id>/set <normalized float>` sets value (clamped).
 - Do not import MIDI here; only express desired LED state.
 */
 import { clamp, toFixedN, to127 } from "../util/scale.js";
@@ -28,7 +28,7 @@ export function BasicPage(config) {
     let dirty = true;
     let ctxRef = null;
     const emitPageType = (ctx) => {
-        ctx.osc.send(`/twister_out/page_${ctx.slotLabel}/type`, "Basic");
+        ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/type`, "Basic");
     };
     const clampColor = (value) => {
         if (typeof value === "number" && Number.isFinite(value)) {
@@ -81,11 +81,20 @@ export function BasicPage(config) {
         colors[encId] = next;
         return true;
     };
+    const updateSingleBrightness = (encId, value) => {
+        if (!Number.isInteger(encId) || encId < 0 || encId > 15)
+            return false;
+        const next = clampBrightness(value);
+        if (baseBrightness[encId] === next)
+            return false;
+        baseBrightness[encId] = next;
+        return true;
+    };
     const sendDump = (ctx) => {
         const colorPayload = colors.map((c) => c);
         const valuePayload = Array.from(vals, (v) => toFixedN(v / 127, 5));
-        ctx.osc.send(`/twister_out/page_${ctx.slotLabel}/encoderColors`, ...colorPayload);
-        ctx.osc.send(`/twister_out/page_${ctx.slotLabel}/allvalues`, ...valuePayload);
+        ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/config/color/map`, ...colorPayload);
+        ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/index/all/value`, ...valuePayload);
     };
     const frame = () => {
         const out = {};
@@ -119,18 +128,18 @@ export function BasicPage(config) {
             if (ev.type === "encoder/turn") {
                 const step = 128 / ctx.resolution;
                 vals[ev.id] = clamp(vals[ev.id] + Math.round(ev.delta * step), 0, 127);
-                // OSC out: /twister_out/page_{a..h} {id} {0..1}
-                ctx.osc.send(`/twister_out/page_${ctx.slotLabel}`, ev.id, toFixedN(vals[ev.id] / 127, 5));
+                // OSC out: /twister/out/page_<slot>/index/<id>/value <0..1>
+                ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/index/${ev.id}/value`, toFixedN(vals[ev.id] / 127, 5));
                 dirty = true;
             }
             if (ev.type === "encoder/press") {
                 pressed[ev.id] = ev.down;
-                ctx.osc.send(`/twister_out/page_${ctx.slotLabel}/press`, ev.id, ev.down ? 1 : 0);
+                ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/index/${ev.id}/press`, ev.down ? 1 : 0);
                 dirty = true;
             }
         },
         onOsc(path, args, ctx) {
-            if (path === "/config/encoderColors") {
+            if (path === "/config/color/map") {
                 const changed = applyEncoderColors(args);
                 if (changed) {
                     dirty = true;
@@ -138,10 +147,29 @@ export function BasicPage(config) {
                 }
                 return;
             }
-            if (path === "/config/encoderColor") {
-                const encId = Number(args[0]);
-                const color = args[1];
+            if (path === "/config/colorbrightness/map") {
+                const changed = applyEncoderBrightness(args);
+                if (changed) {
+                    dirty = true;
+                    ctx.setDirty();
+                }
+                return;
+            }
+            const colorSingleMatch = path.match(/^\/config\/color\/enc\/(\d{1,2})\/set$/);
+            if (colorSingleMatch) {
+                const encId = Number(colorSingleMatch[1]);
+                const color = args[0];
                 if (updateSingleColor(encId, color)) {
+                    dirty = true;
+                    ctx.setDirty();
+                }
+                return;
+            }
+            const brightnessSingleMatch = path.match(/^\/config\/colorbrightness\/enc\/(\d{1,2})\/set$/);
+            if (brightnessSingleMatch) {
+                const encId = Number(brightnessSingleMatch[1]);
+                const brightness = args[0];
+                if (updateSingleBrightness(encId, brightness)) {
                     dirty = true;
                     ctx.setDirty();
                 }
@@ -151,15 +179,15 @@ export function BasicPage(config) {
                 sendDump(ctx);
                 return;
             }
-            // /twister_in/page_{x}/set/{id} {normFloat}
-            const m = path.match(/\/set\/(\d{1,2})$/);
-            if (m) {
-                const id = Number(m[1]) | 0;
+            // /twister/in/page/<slot>/index/<id>/set <normFloat>
+            const setMatch = path.match(/^\/index\/(\d{1,2})\/set$/);
+            if (setMatch) {
+                const id = Number(setMatch[1]) | 0;
                 const v = Number(args[0]);
                 if (id >= 0 && id < 16 && Number.isFinite(v)) {
                     vals[id] = clamp(Math.round(v * 127), 0, 127);
                     // Also emit OSC out so external clients see the update
-                    ctx.osc.send(`/twister_out/page_${ctx.slotLabel}`, id, toFixedN(vals[id] / 127, 5));
+                    ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/index/${id}/value`, toFixedN(vals[id] / 127, 5));
                     dirty = true;
                 }
             }

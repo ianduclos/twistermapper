@@ -27,6 +27,7 @@ console.log("MIDI OUT:", midiIo.getOutPortName?.() ?? "(unknown)");
 let rec = new LedReconciler(midiIo);
 // --- OSC transport (defaults: in 57121, out 57120) ---
 const osc = createOsc();
+osc.send("/twister/out/hello");
 const resolution = 128;
 const modifiers = {
     shiftLeft: false,
@@ -292,14 +293,17 @@ const brightnessSummary = customBrightnessLabels.length > 0
     ? `custom on ${customBrightnessLabels.join(",")}`
     : "default";
 console.log(`Slots: ${pageSummary} (colors: ${colorsSummary}; brightness: ${brightnessSummary})`);
-const BASIC_ONLY_SUB_PATHS = new Set([
-    "/config/encoderColors",
-    "/config/encoderColor",
-    "/dump",
-]);
+const BASIC_ONLY_PATTERNS = [
+    /^\/config\/color\/map$/,
+    /^\/config\/color\/enc\/\d{1,2}\/set$/,
+    /^\/config\/colorbrightness\/map$/,
+    /^\/config\/colorbrightness\/enc\/\d{1,2}\/set$/,
+    /^\/dump$/,
+];
+const matchesBasicOnlyPath = (path) => BASIC_ONLY_PATTERNS.some((regex) => regex.test(path));
 const isBasicSlot = (slot) => slotPageNames[slot] === "Basic";
 const allowBasicOnlyRoute = (slot, subPath) => {
-    if (!BASIC_ONLY_SUB_PATHS.has(subPath))
+    if (!matchesBasicOnlyPath(subPath))
         return true;
     if (isBasicSlot(slot))
         return true;
@@ -308,19 +312,10 @@ const allowBasicOnlyRoute = (slot, subPath) => {
 };
 const settings = loadSettings();
 const { mainDoubleClickMs, mainHoldThresholdMs, debounceMs, } = settings.interaction;
-const parseSlotInput = (value) => {
-    if (typeof value === "number" && Number.isInteger(value)) {
-        const idx = value;
-        return idx >= 0 && idx < SLOT_INDICES.length ? SLOT_INDICES[idx] : undefined;
-    }
-    if (typeof value === "string") {
-        const lower = value.toLowerCase();
-        if (/^\d+$/.test(lower)) {
-            return parseSlotInput(Number(lower));
-        }
-        return slotFromLabel(lower);
-    }
-    return undefined;
+const parseSlotLabel = (value) => {
+    if (typeof value !== "string")
+        return undefined;
+    return slotFromLabel(value);
 };
 function renderOverlay(focus) {
     const mk = (o = {}) => ({
@@ -483,9 +478,9 @@ midiIo.onMessage((msg) => dec.pushRaw(msg));
 console.log('Daemon up. Using port "Midi Fighter Twister". Twist & press to test.');
 // OSC input → core routes
 osc.onMessage((path, args) => {
-    // /twister_in/focus {0..7 | a..h}
-    if (path === "/twister_in/focus") {
-        const slot = parseSlotInput(args[0]);
+    // /twister/in/focus/page <a..h>
+    if (path === "/twister/in/focus/page") {
+        const slot = parseSlotLabel(args[0]);
         if (slot !== undefined) {
             focusedSlot = slot;
             pm.focus(slot);
@@ -494,19 +489,27 @@ osc.onMessage((path, args) => {
         }
         return;
     }
-    // /twister_in/clock 1 tick → broadcast to all pages (StepSeq uses this)
-    if (path === "/twister_in/clock") {
+    // /twister/in/clock <int> → broadcast to all pages (StepSeq uses this)
+    if (path === "/twister/in/clock") {
         for (const slot of SLOT_INDICES) {
             pm.routeOscToPage(slot, path, args);
         }
         return;
     }
-    // /twister_in/page_{a|...|h}/...
-    const m = path.match(/^\/twister_in\/page_([a-hA-H])\/(.+)$/);
+    // /twister/in/dump/global → request palette/value dumps from Basic pages
+    if (path === "/twister/in/dump/global") {
+        for (const slot of SLOT_INDICES) {
+            if (isBasicSlot(slot))
+                pm.routeOscToPage(slot, "/dump", []);
+        }
+        return;
+    }
+    // /twister/in/page/<slot>/...
+    const m = path.match(/^\/twister\/in\/page\/([a-hA-H])\/(.+)$/);
     if (m) {
         const slot = slotFromLabel(m[1]);
         if (slot !== undefined) {
-            const sub = `/` + m[2]; // pass the remainder to the page
+            const sub = `/${m[2]}`; // pass the remainder to the page
             if (allowBasicOnlyRoute(slot, sub))
                 pm.routeOscToPage(slot, sub, args);
         }
@@ -514,7 +517,7 @@ osc.onMessage((path, args) => {
     }
 });
 console.log("Daemon up: MIDI+OSC live. In: 57121  Out: 57120");
-console.log("Try: focus → /twister_in/focus a   | set → /twister_in/page_a/set/0 0.5");
+console.log("Try: focus → /twister/in/focus/page a   | set → /twister/in/page/a/index/0/set 0.5");
 async function rebuildIoAndSplash(pm) {
     try {
         midiIo.close();

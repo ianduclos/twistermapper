@@ -39,8 +39,9 @@ const sanitizeClockIds = (ids) => {
         if (!Number.isFinite(n))
             continue;
         const clamped = clamp(n, 0, 5);
-        if (!out.includes(clamped))
-            out.push(clamped);
+        const normalized = ((clamped % 4) + 4) % 4;
+        if (!out.includes(normalized))
+            out.push(normalized);
     }
     if (!out.length)
         return [...DEFAULT_CLOCK_IDS];
@@ -54,15 +55,18 @@ export function StepSeqPage(config) {
     let dirty = true;
     let ctxRef = null;
     const trackClockFilters = Array.from({ length: TRACK_COUNT }, (_, idx) => sanitizeClockIds(config?.tracks?.[idx]?.clockIds));
+    const SHIFT_LATCH_DOUBLE_MS = 320;
+    let probabilityLatched = false;
+    let lastShiftTapAt = 0;
     const stepButtonsDown = new Set();
     let loopEdit = null;
     const emitPageType = (ctx) => {
-        ctx.osc.send(`/twister_out/page_${ctx.slotLabel}/type`, "StepSeq");
+        ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/type`, "StepSeq");
     };
     const emitTrackValue = (ctx, trackId) => {
         const value = tracks[trackId].steps[tracks[trackId].playhead];
         lastOutputs[trackId] = value;
-        ctx.osc.send(`/twister_out/page_${ctx.slotLabel}`, trackId, toFixedN(value / 127, 5));
+        ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/index/${trackId}/value`, toFixedN(value / 127, 5));
     };
     const clampStepIndex = (step) => clamp(step, 0, STEP_COUNT - 1);
     const applyLoopRange = (ctx, trackId, start, end) => {
@@ -127,6 +131,7 @@ export function StepSeqPage(config) {
         dirty = true;
         ctx.setDirty();
     };
+    const isProbabilityMode = (ctx) => probabilityLatched || ctx.modifiers.shiftRight;
     const probabilityStepSize = (ctx) => Math.max(1, Math.round(128 / ctx.resolution));
     const adjustTrackProbability = (ctx, trackId, delta) => {
         const change = delta * probabilityStepSize(ctx);
@@ -160,7 +165,7 @@ export function StepSeqPage(config) {
     };
     const handleStepTurn = (ctx, stepEncIndex, delta) => {
         const stepIdx = clampStepIndex(stepEncIndex);
-        if (ctx.modifiers.shiftRight) {
+        if (isProbabilityMode(ctx)) {
             adjustStepProbability(ctx, highlightedTrack, stepIdx, delta);
             return;
         }
@@ -178,23 +183,10 @@ export function StepSeqPage(config) {
     };
     const handleStepPressDown = (stepIdx, ctx) => {
         stepButtonsDown.add(stepIdx);
-        const now = Date.now();
         if (!loopEdit) {
-            loopEdit = {
-                primary: stepIdx,
-                triggeredRange: false,
-                latched: false,
-                lastPressAt: now,
-            };
+            loopEdit = { primary: stepIdx, triggeredRange: false };
             return;
         }
-        if (loopEdit.latched)
-            return;
-        if (stepIdx === loopEdit.primary && now - loopEdit.lastPressAt <= 320) {
-            loopEdit.latched = true;
-            return;
-        }
-        loopEdit.lastPressAt = now;
         if (!loopEdit.triggeredRange && stepIdx !== loopEdit.primary) {
             loopEdit.secondary = stepIdx;
             loopEdit.triggeredRange = true;
@@ -205,12 +197,10 @@ export function StepSeqPage(config) {
         stepButtonsDown.delete(stepIdx);
         if (!loopEdit)
             return;
-        if (loopEdit.latched && stepIdx === loopEdit.primary) {
-            loopEdit.latched = false;
-            loopEdit = null;
-            return;
+        if (!loopEdit.triggeredRange && stepIdx === loopEdit.primary) {
+            setSingleLoopEndpoint(ctx, stepIdx);
         }
-        if (stepButtonsDown.size === 0 && !loopEdit.latched) {
+        if (stepButtonsDown.size === 0) {
             if (!loopEdit.triggeredRange && stepIdx === loopEdit.primary) {
                 setSingleLoopEndpoint(ctx, stepIdx);
             }
@@ -219,7 +209,7 @@ export function StepSeqPage(config) {
     };
     const renderFrame = () => {
         const frame = {};
-        const showProbability = ctxRef?.modifiers.shiftRight ?? false;
+        const showProbability = probabilityLatched || (ctxRef?.modifiers.shiftRight ?? false);
         for (const trackEnc of TRACK_ENCODERS) {
             const trackId = trackEnc;
             const isHighlighted = highlightedTrack === trackId;
@@ -288,7 +278,7 @@ export function StepSeqPage(config) {
                 }
                 case "encoder/turn": {
                     if (ev.id >= 0 && ev.id <= 3) {
-                        if (ctx.modifiers.shiftRight) {
+                        if (isProbabilityMode(ctx)) {
                             adjustTrackProbability(ctx, ev.id, ev.delta);
                         }
                         return;
@@ -301,8 +291,22 @@ export function StepSeqPage(config) {
                 }
                 case "side/shift": {
                     if (ev.side === "right") {
-                        dirty = true;
-                        ctx.setDirty();
+                        if (ev.down) {
+                            const now = Date.now();
+                            if (probabilityLatched) {
+                                probabilityLatched = false;
+                            }
+                            else if (now - lastShiftTapAt <= SHIFT_LATCH_DOUBLE_MS) {
+                                probabilityLatched = true;
+                            }
+                            lastShiftTapAt = now;
+                            dirty = true;
+                            ctx.setDirty();
+                        }
+                        else if (!probabilityLatched) {
+                            dirty = true;
+                            ctx.setDirty();
+                        }
                     }
                     return;
                 }
@@ -311,10 +315,11 @@ export function StepSeqPage(config) {
             }
         },
         onOsc(path, args, ctx) {
-            if (path === "/twister_in/clock") {
-                const clockId = Number(args?.[0]);
-                if (!Number.isFinite(clockId))
+            if (path === "/twister/in/clock") {
+                const rawId = Number(args?.[0]);
+                if (!Number.isFinite(rawId))
                     return;
+                const clockId = ((Math.round(rawId) % 4) + 4) % 4;
                 let ticked = false;
                 for (let t = 0; t < TRACK_COUNT; t++) {
                     if (!trackClockFilters[t].includes(clockId))
@@ -338,6 +343,8 @@ export function StepSeqPage(config) {
             stepButtonsDown.clear();
             loopEdit = null;
             ctxRef = null;
+            probabilityLatched = false;
+            lastShiftTapAt = 0;
         },
     };
 }

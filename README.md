@@ -4,9 +4,9 @@ Headless Node.js/TypeScript daemon that drives a MIDI Fighter Twister (MFT), ren
 
 ## Page Prototypes
 
-- **BasicPage** – 16 continuous controls (0–127), per-encoder color/brightness palette, press-to-max-brightness feedback, OSC mirroring (`/twister_out/page_{slot}`). Accepts `/twister_in/page_{slot}/set`, optional palette updates, and `/dump` requests.
+- **BasicPage** – 16 continuous controls (0–127), per-encoder color/brightness palette, press-to-max-brightness feedback, OSC mirroring (`/twister/out/page/<slot>/index/<id>/value`). Accepts `/twister/in/page/<slot>/index/<id>/set`, palette updates under `/config/color/...`, brightness updates under `/config/colorbrightness/...`, and participates in `/twister/in/dump/global`.
 - **GesturePage** – Per-encoder record/playback looper with standby/record/playback states, pulse animation on record, smooth looping playback, and OSC mirroring while values evolve.
-- **StepSeqPage** – Four-track, 12-step sequencer driven by `/twister_in/clock` ticks. Steps hold value and probability layers: normal mode edits values and shows current step output; holding right shift flips encoders to probability view, where step rings show 0–100% chance and top encoders adjust all probabilities per track. Every tick emits `/twister_out/page_{slot} <track> <norm>`.
+- **StepSeqPage** – Four-track, 12-step sequencer driven by `/twister/in/clock` ticks. Steps hold value and probability layers: normal mode edits values and shows current step output; holding right shift flips encoders to probability view, where step rings show 0–100% chance and top encoders adjust all probabilities per track. Every tick emits `/twister/out/page/<slot>/index/<track>/value <norm>`.
 
 ## Overlay & Interaction
 
@@ -16,26 +16,30 @@ Headless Node.js/TypeScript daemon that drives a MIDI Fighter Twister (MFT), ren
 ## OSC Messages
 
 **Outgoing**
-- `/twister_out/page_{a..h} <encId 0..15> <value 0..1>` – value updates.
-- `/twister_out/page_{slot}/encoderColors <16 ints>` – BasicPage palette dump (in response to `/dump`).
-- `/twister_out/page_{slot}/allvalues <16 floats>` – BasicPage normalized values (in response to `/dump`).
-- `/twister_out/page_{slot}/press <encId> <0|1>` – Encoder press state broadcasts (BasicPage, StepSeqPage for relevant controls).
+- `/twister/out/hello` – sent once when the OSC transport comes up.
+- `/twister/out/page/<slot>/type <string>` – page identity (emitted on init/focus).
+- `/twister/out/page/<slot>/index/<id>/value <0..1>` – value broadcasts (Basic, StepSeq, Gesture).
+- `/twister/out/page/<slot>/index/<id>/press <1|0>` – encoder button state (pages that surface presses).
+- `/twister/out/page/<slot>/config/color/map <16 ints>` – BasicPage palette dump (in response to `/twister/in/dump/global`).
+- `/twister/out/page/<slot>/index/all/value <16 floats>` – BasicPage normalized values dump.
 
 **Incoming (core)**
-- `/twister_in/focus {a..h|0..7}` – focus slot.
-- `/twister_in/clock 1` – external clock tick (consumed by StepSeqPage; broadcast to all pages).
+- `/twister/in/focus/page <slotLetter>` – focus slot (letters `a`–`h` only).
+- `/twister/in/clock <int>` – external clock tick (broadcast to pages; StepSeq consumes IDs 0–3).
+- `/twister/in/dump/global` – request palette/value dumps from Basic pages.
 
 **Incoming (page scoped)**
-- `/twister_in/page_{slot}/set <encId> <norm>` – set value (BasicPage; GesturePage only in standby).
-- `/twister_in/page_{slot}/config/encoderColors <16 ints>` – replace BasicPage palette.
-- `/twister_in/page_{slot}/config/encoderColor <encId> <int>` – update one BasicPage encoder color.
-- `/twister_in/page_{slot}/dump` – request encoder colors + values.
+- `/twister/in/page/<slot>/index/<id>/set <norm>` – set value (BasicPage; GesturePage only in standby).
+- `/twister/in/page/<slot>/config/color/map <16 ints>` – replace BasicPage palette.
+- `/twister/in/page/<slot>/config/color/enc/<id>/set <int>` – update one BasicPage encoder color.
+- `/twister/in/page/<slot>/config/colorbrightness/map <16 ints>` – replace BasicPage brightness map.
+- `/twister/in/page/<slot>/config/colorbrightness/enc/<id>/set <int>` – update one BasicPage encoder brightness.
 
 ## Slots & Settings
 
 - `configs/slots.json` maps slots A–H to page factories and optional BasicPage encoder color/brightness palettes.
 - `configs/settings.json` tweaks main-button interaction timings (double-click window, hold threshold, debounce).
-- `configs/slots.json` → StepSeq slots may include `{"tracks": [{"clockIds": [0,2,5]}, ...]}` to choose which `/twister_in/clock` IDs each track advances on (defaults to 0).
+- `configs/slots.json` → StepSeq slots may include `{"tracks": [{"clockIds": [0,2,5]}, ...]}` to choose which `/twister/in/clock` IDs each track advances on (defaults to 0).
 
 ## Configuration Files
 

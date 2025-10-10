@@ -1,6 +1,6 @@
 Overview (human-readable)
 
-This project is a headless Node.js “brain” for the MIDI Fighter Twister (MFT). It does three big things: 1. Decouples input from feedback. We treat encoder turns as relative deltas and render LEDs from our own virtual page state, not from the device firmware’s built-ins. That lets us build features like multiple “pages,” record/playback gestures, and visual overlays. 2. Owns the LEDs with a renderer + rate limits. We keep a cached “last sent” LED frame per encoder and diff to the new desired frame. A LedReconciler sends only what changed, in the right order, under strict burst and rolling caps so the Twister stays happy. Animations (e.g., pulse) are handled carefully to avoid clobbering brightness. 3. Speaks OSC to the DAW/Max world. Page changes and value changes go out over OSC as normalized floats; pages can also receive OSC to set values. We use simple, routable paths (e.g., /twister_out/page_a 1 0.92). There’s no GUI; the app is meant to sit between the Twister and your audio software.
+This project is a headless Node.js “brain” for the MIDI Fighter Twister (MFT). It does three big things: 1. Decouples input from feedback. We treat encoder turns as relative deltas and render LEDs from our own virtual page state, not from the device firmware’s built-ins. That lets us build features like multiple “pages,” record/playback gestures, and visual overlays. 2. Owns the LEDs with a renderer + rate limits. We keep a cached “last sent” LED frame per encoder and diff to the new desired frame. A LedReconciler sends only what changed, in the right order, under strict burst and rolling caps so the Twister stays happy. Animations (e.g., pulse) are handled carefully to avoid clobbering brightness. 3. Speaks OSC to the DAW/Max world. Page changes and value changes go out over OSC as normalized floats; pages can also receive OSC to set values. We use simple, routable paths (e.g., /twister/out/page/a/index/1/value 0.92). There’s no GUI; the app is meant to sit between the Twister and your audio software.
 
 We currently ship two page prototypes: BasicPage (16 normalized values with direct LED monitoring) and GesturePage (per-encoder record→playback looper with proper loop wrap and “silence at end” recording). A Main overlay uses the side buttons to temporarily focus an index-selection page that highlights page slots and lets you switch focus with encoder presses. On boot we run a short boot splash (frames of LED color/brightness) to “warm” the hardware and then immediately paint the focused page twice to settle brightness deterministically.
 
@@ -51,20 +51,26 @@ Delta policy
 
 OSC
 
-Out (page-specific):
-• /\*_ twister*out / page*{a|b|c|d|e|f|g|h} _/ <encId 0..15> <valueNormalized 0..1>
-• /twister_out/page_{slot}/press <encId> <0|1> (pages that broadcast button state, e.g., BasicPage, StepSeqPage).
-• Example (BasicPage): /twister_out/page_a 1 0.77380 (≤ 5 decimals).
+Out (core + page-specific):
+• /twister/out/hello → emitted once when OSC transport is ready.
+• /twister/out/page/<slot>/type <string> → page identity handshake (init + focus).
+• /twister/out/page/<slot>/index/<id>/value <0..1> → normalized value broadcast (Basic, StepSeq, Gesture).
+• /twister/out/page/<slot>/index/<id>/press <1|0> → encoder button state for pages that surface presses.
+• /twister/out/page/<slot>/config/color/map <16 ints> → BasicPage palette dump (response to `/twister/in/dump/global`).
+• /twister/out/page/<slot>/index/all/value <16 floats> → BasicPage normalized value dump.
+• Example (BasicPage): /twister/out/page/a/index/1/value 0.77380 (≤ 5 decimals).
 
 In (core):
-• /twister_in/focus {a|b|c|d|e|f|g|h | 0|1|2|3|4|5|6|7} → focus page by letter or index.
-• /twister_in/clock 1 → external clock tick broadcast to all pages (StepSeqPage consumes this).
+• /twister/in/focus/page <slotLetter> → focus page by letter (`a`–`h`).
+• /twister/in/clock <int> → external clock tick broadcast to all pages (StepSeqPage consumes IDs 0–3).
+• /twister/in/dump/global → request palette/value dumps from Basic pages.
 
 In (page):
-• /twister*in/page*{a|b|c|d|e|f|g|h}/set <encId> <normalized> → set internal value (page decides if it’s allowed; e.g., GesturePage only in standby).
-• /twister_in/page_{slot}/config/encoderColors <16 ints> → replace BasicPage encoder palette (ignored if the slot isn’t BasicPage).
-• /twister_in/page_{slot}/config/encoderColor <encId> <color> → update a single BasicPage encoder color.
-• /twister_in/page_{slot}/dump → respond with /twister_out/page_{slot}/encoderColors (16 ints) and /twister_out/page_{slot}/allvalues (16 floats ≤5 dp).
+• /twister/in/page/<slot>/index/<id>/set <normalized> → set internal value (page decides if it’s allowed; e.g., GesturePage only in standby).
+• /twister/in/page/<slot>/config/color/map <16 ints> → replace BasicPage encoder palette (ignored if the slot isn’t BasicPage).
+• /twister/in/page/<slot>/config/color/enc/<id>/set <color> → update a single BasicPage encoder color.
+• /twister/in/page/<slot>/config/colorbrightness/map <16 ints> → replace BasicPage encoder brightness map.
+• /twister/in/page/<slot>/config/colorbrightness/enc/<id>/set <int> → update a single BasicPage encoder brightness.
 
 OSC numeric rules:
 • Floats emitted with max 5 decimals.
@@ -87,8 +93,8 @@ BasicPage (reference)
 • LED ring mirrors value (scaled 0..127).
 • Defaults: purple (110), ledBrightness = 5 (device 23), ringBrightness = 31.
 • Press (hold): temporarily set ledBrightness = 29 (max); release restores.
-• OSC out on change: /twister_out/page_x <id> <val/127> (≤ 5 dp) and /twister_out/page_x/press <encId> <0|1> when encoder buttons change.
-• OSC in (optional): /twister_in/page_x/set <id> <norm>.
+• OSC out on change: /twister/out/page/<slot>/index/<id>/value <val/127> (≤ 5 dp) and /twister/out/page/<slot>/index/<id>/press <1|0> when encoder buttons change.
+• OSC in (optional): /twister/in/page/<slot>/index/<id>/set <norm>.
 
 GesturePage (record / playback looper)
 • Per encoder mode: standby (blue, brightness 5) → record (red + pulse animation) → playback (green, brightness 10).
@@ -99,10 +105,10 @@ GesturePage (record / playback looper)
 
 StepSeqPage (clocked 4-track sequencer)
 • Four tracks (encoders 0–3) each with 12 steps, individual playhead, loop start/end, and per-step probability.
-• Tracks emit `/twister_out/page_{slot} <track> <valueNorm>` on every `/twister_in/clock 1` tick; LEDs show per-track values (highlighted track at brightness 29, others 10). When a probability roll fails, the playhead holds for one extra tick before retrying.
+• Tracks emit `/twister/out/page/<slot>/index/<track>/value <valueNorm>` on every `/twister/in/clock <id>` tick; LEDs show per-track values (highlighted track at brightness 29, others 10). When a probability roll fails, the playhead holds for one extra tick before retrying.
 • Encoders 4–15 display the highlighted track’s 12 steps: loop inclusion uses dim/bright states, playhead flashes at track color+13 and brightness 29. Holding right shift swaps the view to probability percentages (rings scale 0–100%).
 • Turning step encoders edits values in normal mode; with right shift held they adjust that step’s probability (0–100%). Top encoders 0–3 adjust all probabilities within the track while shift is held. Pressing steps sets loop ends or ranges (press+press chord). Loop edits keep playhead inside bounds and can trigger immediate output updates.
-• Step button presses also broadcast `/twister_out/page_{slot}/press <encId> <0|1>`; page keeps running while unfocused so clock ticks advance playheads regardless of focus.
+• Step button presses also broadcast `/twister/out/page/<slot>/index/<id>/press <1|0>`; page keeps running while unfocused so clock ticks advance playheads regardless of focus.
 
 ⸻
 
@@ -144,7 +150,7 @@ Boot splash (startup warm-up)
 Config (JSON)
 • Color indices, channel/CC/note map, and any optional encoder index offset/map are defined in JSON.
 • configs/slots.json selects page prototypes (A–H) and optional BasicPage encoder color/brightness palettes.
-• StepSeq slots may provide per-track clock lists (e.g., `{"tracks":[{"clockIds":[0,2,5]},...]}`) to decide which `/twister_in/clock` IDs advance each track (default 0).
+• StepSeq slots may provide per-track clock lists (e.g., `{"tracks":[{"clockIds":[0,2,5]},...]}`) to decide which `/twister/in/clock` IDs advance each track (default 0).
 • configs/settings.json defines interaction timings (double-click window, hold threshold, debounce) for the Main overlay trigger.
 • Only the MIDI driver knows about device numbers & channels; core code works with human-readable values:
 • LED brightness: human 0..29 → device 18..47.
@@ -198,5 +204,5 @@ Known-good behaviors to preserve
 
 Out of scope for now (future ideas)
 • Hot-plug watcher to re-run splash on USB reconnect.
-• Full state sync at startup (Max → Node) via /twister_in/state … and /twister_out/state_ack.
+• Full state sync at startup (Max → Node) via /twister/in/state … and /twister/out/state/ack.
 • More page types (sequencers, LFOs), pagination beyond A–H.
