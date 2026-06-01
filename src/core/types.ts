@@ -55,6 +55,12 @@ export interface Page {
 	onEvent(ev: InputEvent, ctx: PageContext): void
 	onOsc?(path: string, args: any[], ctx: PageContext): void
 	render(ctx: PageContext): LedFrame | undefined
+	/**
+	 * Return this page's structural config (e.g. color palette, clock routing) for
+	 * capturing into a preset, or undefined if the page has no config. Must NOT
+	 * include transient runtime values (encoder positions, sequencer steps, playhead).
+	 */
+	serialize?(): unknown
 	dispose(): void
 }
 

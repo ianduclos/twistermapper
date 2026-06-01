@@ -385,6 +385,12 @@ const handleStepPressUp = (stepIdx: number, ctx: PageContext) => {
 			dirty = false
 			return renderFrame()
 		},
+		serialize() {
+			// Structural config only: per-track clock routing, not step patterns/playhead.
+			return {
+				tracks: trackClockFilters.map((ids) => ({ clockIds: [...ids] })),
+			}
+		},
 		dispose() {
 			stepButtonsDown.clear()
 			loopEdit = null

@@ -227,6 +227,13 @@ export function BasicPage(config?: BasicPageConfig): Page {
 			dirty = false
 			return frame()
 		},
+		serialize() {
+			// Structural config only: live palette + brightness, not encoder values.
+			return {
+				encoderColors: [...colors],
+				encoderBrightness: [...baseBrightness],
+			}
+		},
 		dispose() {
 			ctxRef = null
 		},

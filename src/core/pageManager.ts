@@ -101,4 +101,9 @@ export class PageManager {
 	getDesiredFocused(): LedFrame | undefined {
 		return this.desired[this.focused]
 	}
+
+	/** Capture a slot's page config for presets (undefined if the page has none). */
+	serialize(slot: Slot): unknown {
+		return this.pages[slot]?.serialize?.()
+	}
 }

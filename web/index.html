@@ -24,6 +24,12 @@
 		#dot.on { background: var(--ok); }
 		main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 18px; max-width: 1000px; }
 		@media (max-width: 720px) { main { grid-template-columns: 1fr; } }
+		.tabs { display: flex; gap: 2px; padding: 0 18px; border-bottom: 1px solid var(--line); }
+		.tabs button { background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0; color: var(--mut); padding: 10px 14px; cursor: pointer; font: inherit; }
+		.tabs button:hover { color: var(--txt); }
+		.tabs button.active { color: var(--txt); border-bottom-color: var(--acc); }
+		main.tab { display: none; }
+		main.tab.active { display: grid; }
 		.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
 		.panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--mut); margin: 0 0 14px; }
 		.row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -58,6 +64,14 @@
 		#log { font-family: ui-monospace, monospace; font-size: 11px; color: var(--mut); height: 150px; overflow: auto; background: #0b0d12; border: 1px solid var(--line); border-radius: 6px; padding: 8px; white-space: pre-wrap; }
 		.hint { font-size: 11px; color: var(--mut); margin-top: 4px; }
 		.span2 { grid-column: 1 / -1; }
+		.layoutgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+		.lcell { display: flex; flex-direction: column; gap: 4px; }
+		.llab { font-size: 11px; font-weight: 700; color: var(--mut); text-align: center; }
+		.lcell select { width: 100%; }
+		.prow { gap: 8px; margin-bottom: 8px; }
+		.prow .pname { flex: 1; }
+		.prow .pname.active { color: var(--ok); font-weight: 600; }
+		input[type=text] { background: #0f1117; color: var(--txt); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; }
 	</style>
 </head>
 <body>
@@ -66,7 +80,12 @@
 		<div id="status"><span id="dot"></span><span id="statusText">connecting…</span></div>
 	</header>
 
-	<main>
+	<nav class="tabs">
+		<button data-tab="tab-control" class="active">Control</button>
+		<button data-tab="tab-setup">Setup</button>
+	</nav>
+
+	<main id="tab-control" class="tab active">
 		<!-- Pulse generator -->
 		<section class="panel">
 			<h2>Pulse Generator</h2>
@@ -122,13 +141,53 @@
 		</section>
 	</main>
 
+	<main id="tab-setup" class="tab">
+		<!-- Presets -->
+		<section class="panel span2">
+			<h2>Presets — active: <span id="activePreset" class="hint">unsaved</span></h2>
+			<div class="row" style="margin-bottom:6px;"><label style="min-width:auto;">Layout (page per slot)</label></div>
+			<div class="layoutgrid" id="layoutGrid"></div>
+			<div class="row" style="margin-top:14px;">
+				<input id="presetName" type="text" placeholder="preset name" maxlength="48" style="width:180px;" />
+				<button id="savePreset" class="primary">Save as</button>
+			</div>
+			<div id="presetList"></div>
+			<div class="hint">Layout dropdowns reassign a slot's page live. "Save as" snapshots the whole interface; Load applies a saved preset (persists across restart).</div>
+		</section>
+
+		<!-- Global settings -->
+		<section class="panel span2">
+			<h2>Global Settings</h2>
+			<div class="row">
+				<label for="set_mainDoubleClickMs">Dbl-click ms</label>
+				<input id="set_mainDoubleClickMs" type="number" min="1" max="5000" step="1" />
+				<label for="set_mainHoldThresholdMs">Hold ms</label>
+				<input id="set_mainHoldThresholdMs" type="number" min="1" max="5000" step="1" />
+			</div>
+			<div class="row">
+				<label for="set_debounceMs">Debounce ms</label>
+				<input id="set_debounceMs" type="number" min="1" max="5000" step="1" />
+				<label for="set_fps">Render FPS</label>
+				<input id="set_fps" type="number" min="1" max="120" step="1" />
+			</div>
+			<div class="row">
+				<button id="saveSettings" class="primary">Apply &amp; Save</button>
+			</div>
+			<div class="hint">Applied live and persisted to settings.json. Changing FPS rebuilds the render loop.</div>
+		</section>
+	</main>
+
 	<script>
 	(() => {
 		const SLOTS = ["a","b","c","d","e","f","g","h"]
+		const PAGE_OPTIONS = ["Basic","Gesture","StepSeq"]
 		let focused = null
 		const types = {}                 // slot -> page type
 		const values = {}                // slot -> { index -> 0..1 }
 		SLOTS.forEach(s => values[s] = {})
+		let presets = []                 // saved preset names
+		let activePreset = ""            // "" = unsaved/custom
+		let settings = null              // global settings snapshot
 
 		// ---- WebSocket (served by the daemon on the same host/port) ----
 		let ws = null
@@ -156,8 +215,11 @@
 		function handleIn({ path, args }) {
 			log(`← ${path} ${JSON.stringify(args)}`)
 			if (path === "/twister/out/focus/page") { setFocus(args[0]); return }
+			if (path === "/twister/out/preset/list") { presets = args.slice(); renderPresets(); return }
+			if (path === "/twister/out/preset/active") { activePreset = args[0] || ""; renderPresets(); return }
+			if (path === "/twister/out/settings") { try { settings = JSON.parse(args[0]) } catch {} ; renderSettings(); return }
 			let m = path.match(/^\/twister\/out\/page\/([a-h])\/type$/)
-			if (m) { types[m[1]] = args[0]; renderFocusGrid(); return }
+			if (m) { types[m[1]] = args[0]; renderFocusGrid(); renderLayout(); return }
 			m = path.match(/^\/twister\/out\/page\/([a-h])\/index\/(\d+)\/value$/)
 			if (m) { values[m[1]][+m[2]] = Number(args[0]); if (m[1] === focused) renderValues(); return }
 		}
@@ -193,6 +255,79 @@
 				cell.innerHTML = `<div class="bar" style="height:${(val*100).toFixed(0)}%"></div><div class="n">${i}</div>`
 				valuesEl.appendChild(cell)
 			}
+		}
+
+		// ---- Presets ----
+		const layoutGrid = document.getElementById("layoutGrid")
+		function renderLayout() {
+			layoutGrid.innerHTML = ""
+			SLOTS.forEach(s => {
+				const cell = document.createElement("div")
+				cell.className = "lcell"
+				const lab = document.createElement("div")
+				lab.className = "llab"; lab.textContent = s.toUpperCase()
+				const sel = document.createElement("select")
+				PAGE_OPTIONS.forEach(p => {
+					const o = document.createElement("option")
+					o.value = p; o.textContent = p
+					if (types[s] === p) o.selected = true
+					sel.appendChild(o)
+				})
+				sel.onchange = () => send(`/twister/in/slot/${s}/page`, sel.value)
+				cell.appendChild(lab); cell.appendChild(sel)
+				layoutGrid.appendChild(cell)
+			})
+		}
+
+		const presetList = document.getElementById("presetList")
+		const activeEl = document.getElementById("activePreset")
+		function renderPresets() {
+			activeEl.textContent = activePreset || "unsaved"
+			presetList.innerHTML = ""
+			if (!presets.length) { presetList.innerHTML = '<div class="hint">No presets saved yet.</div>'; return }
+			presets.forEach(name => {
+				const row = document.createElement("div")
+				row.className = "row prow"
+				const nm = document.createElement("span")
+				nm.className = "pname" + (name === activePreset ? " active" : "")
+				nm.textContent = name + (name === activePreset ? " ●" : "")
+				const load = document.createElement("button")
+				load.textContent = "Load"
+				load.onclick = () => send("/twister/in/preset/load", name)
+				const del = document.createElement("button")
+				del.textContent = "Delete"
+				del.onclick = () => { if (confirm(`Delete preset "${name}"?`)) send("/twister/in/preset/delete", name) }
+				row.appendChild(nm); row.appendChild(load); row.appendChild(del)
+				presetList.appendChild(row)
+			})
+		}
+
+		const presetNameEl = document.getElementById("presetName")
+		document.getElementById("savePreset").onclick = () => {
+			const name = presetNameEl.value.trim()
+			if (!name) return
+			send("/twister/in/preset/save", name)
+			presetNameEl.value = ""
+		}
+		presetNameEl.addEventListener("keydown", (e) => { if (e.key === "Enter") document.getElementById("savePreset").click() })
+
+		// ---- Global settings ----
+		function renderSettings() {
+			if (!settings) return
+			document.getElementById("set_mainDoubleClickMs").value = settings.interaction.mainDoubleClickMs
+			document.getElementById("set_mainHoldThresholdMs").value = settings.interaction.mainHoldThresholdMs
+			document.getElementById("set_debounceMs").value = settings.interaction.debounceMs
+			document.getElementById("set_fps").value = settings.render.fps
+		}
+		document.getElementById("saveSettings").onclick = () => {
+			const set = (k, id) => {
+				const v = Number(document.getElementById(id).value)
+				if (Number.isFinite(v)) send("/twister/in/settings/set", k, v)
+			}
+			set("mainDoubleClickMs", "set_mainDoubleClickMs")
+			set("mainHoldThresholdMs", "set_mainHoldThresholdMs")
+			set("debounceMs", "set_debounceMs")
+			set("fps", "set_fps")
 		}
 
 		// ---- Pulse generator ----
@@ -241,8 +376,16 @@
 		skipEl.oninput = () => { skipVal.textContent = `${skipEl.value}%` }
 		document.getElementById("clearLog").onclick = () => { logEl.textContent = "" }
 
+		// ---- Tabs ----
+		document.querySelectorAll(".tabs button").forEach(btn => {
+			btn.onclick = () => {
+				document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("active", b === btn))
+				document.querySelectorAll("main.tab").forEach(m => m.classList.toggle("active", m.id === btn.dataset.tab))
+			}
+		})
+
 		// ---- Boot ----
-		renderFocusGrid(); renderValues(); connect()
+		renderFocusGrid(); renderValues(); renderLayout(); renderPresets(); connect()
 	})()
 	</script>
 </body>

@@ -1,22 +1,35 @@
 // src/cli/index.ts
-import { readFileSync } from "node:fs"
+import { readFileSync, writeFileSync } from "node:fs"
 import { resolve as resolvePath, join as joinPath } from "node:path"
 import { tmpdir } from "node:os"
 import midiLib from "@julusian/midi"
 import { tryAcquireLock, releaseLock } from "../util/singleInstance.js"
 import { NodeMidiDriver } from "../io/midiDriver.js" // real driver from Codex task
 import { LedReconciler } from "../render/ledReconciler.js"
-import { createRenderLoop } from "../render/renderLoop.js"
+import { createRenderLoop, type RenderLoop } from "../render/renderLoop.js"
 import { PageManager } from "../core/pageManager.js"
-import { BasicPage } from "../pages/basic.js"
-import { GesturePage } from "../pages/gestures.js"
-import { StepSeqPage } from "../pages/stepSeq.js"
+import {
+	sanitizeSystemConfig,
+	buildSlotDefinition,
+	PAGE_FACTORIES,
+	type SystemConfig,
+	type SlotConfig,
+	type SlotDefinition,
+} from "../core/systemConfig.js"
+import {
+	listPresets,
+	readPreset,
+	writePreset,
+	deletePreset,
+	readActiveConfig,
+	writeActiveConfig,
+	isValidPresetName,
+} from "../core/presetStore.js"
 import { createInputDecoder } from "../io/inputDecoder.js"
 import { createOsc } from "../io/osc.js"
 import { createControlServer, type ControlServer } from "../io/controlServer.js"
 import { runRandomSplash, settleFocused } from "../boot/bootSplashes.js"
 import type {
-	Page,
 	PageContext,
 	Slot,
 	LedState,
@@ -28,8 +41,6 @@ import {
 	slotFromLabel,
 	slotLabel,
 } from "../core/types.js"
-import type { BasicPageConfig } from "../pages/basic.js"
-import type { StepSeqConfig } from "../pages/stepSeq.js"
 import { clamp } from "../util/scale.js"
 
 // ---- Single-instance guard (before opening any MIDI/OSC ports) ----
@@ -150,12 +161,8 @@ const SLOT_COLOR: Record<Slot, number> = {
 	7: 20, // magenta-ish
 }
 
-const SLOTS_CONFIG_PATH = resolvePath(process.cwd(), "configs/slots.json")
 const SETTINGS_CONFIG_PATH = resolvePath(process.cwd(), "configs/settings.json")
 const UI_INDEX_PATH = resolvePath(process.cwd(), "web/index.html")
-const DEFAULT_PAGE_NAME = "Basic"
-const DEFAULT_ENCODER_COLOR = 110
-const DEFAULT_BRIGHTNESS = 5
 
 type Settings = {
 	interaction: {
@@ -179,96 +186,8 @@ const DEFAULT_SETTINGS: Settings = {
 	},
 }
 
-type SlotDefinition = {
-	pageName: string
-	createPage: () => Page
-	hasCustomColors: boolean
-	hasCustomBrightness: boolean
-}
-
-type PageFactory = (config?: unknown) => Page
-
-const PAGE_FACTORIES: Record<string, PageFactory> = {
-	Basic: (config?: unknown) => BasicPage(config as BasicPageConfig | undefined),
-	Gesture: () => GesturePage(),
-	StepSeq: (config?: unknown) => StepSeqPage(config as StepSeqConfig | undefined),
-}
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value)
-
-// Expect an array-like palette; fallback to defaults while clamping into device range.
-const sanitizeEncoderColors = (raw: unknown): number[] | undefined => {
-	if (!Array.isArray(raw)) return undefined
-	const out: number[] = []
-	for (let i = 0; i < 16; i++) {
-		const val = raw[i]
-		let numeric: number
-		if (typeof val === "number" && Number.isFinite(val)) {
-			numeric = val
-		} else if (typeof val === "bigint") {
-			numeric = Number(val)
-		} else {
-			numeric = DEFAULT_ENCODER_COLOR
-		}
-		out.push(clamp(Math.round(numeric), 1, 126))
-	}
-	return out
-}
-
-// Accept optional per-encoder brightness array (human 0..29).
-const sanitizeEncoderBrightness = (raw: unknown): number[] | undefined => {
-	if (!Array.isArray(raw)) return undefined
-	const out: number[] = []
-	for (let i = 0; i < 16; i++) {
-		const val = raw[i]
-		let numeric: number
-		if (typeof val === "number" && Number.isFinite(val)) {
-			numeric = val
-		} else if (typeof val === "bigint") {
-			numeric = Number(val)
-		} else {
-			numeric = DEFAULT_BRIGHTNESS
-		}
-		out.push(clamp(Math.round(numeric), 0, 29))
-	}
-	return out
-}
-
-const STEPSEQ_TRACK_COUNT = 4
-const DEFAULT_STEPSEQ_CLOCK_IDS = [0] as const
-
-const sanitizeClockIdList = (value: unknown): number[] => {
-	const arr = Array.isArray(value) ? value : value === undefined ? undefined : [value]
-	if (!arr) return [...DEFAULT_STEPSEQ_CLOCK_IDS]
-	const ids: number[] = []
-	for (const item of arr) {
-		const n = Math.round(Number(item))
-		if (!Number.isFinite(n)) continue
-		const clamped = clamp(n, 0, 5)
-		if (!ids.includes(clamped)) ids.push(clamped)
-	}
-	if (!ids.length) return [...DEFAULT_STEPSEQ_CLOCK_IDS]
-	ids.sort((a, b) => a - b)
-	return ids
-}
-
-const arraysEqual = (a: number[], b: readonly number[]) =>
-	a.length === b.length && a.every((v, i) => v === b[i])
-
-const sanitizeStepSeqConfig = (raw: unknown): StepSeqConfig | undefined => {
-	if (!isRecord(raw)) return undefined
-	const tracksValue = (raw as Record<string, unknown>)["tracks"]
-	const tracksRaw = Array.isArray(tracksValue) ? tracksValue : []
-	let custom = false
-	const tracks: StepSeqConfig["tracks"] = Array.from({ length: STEPSEQ_TRACK_COUNT }, (_, idx) => {
-		const node = isRecord(tracksRaw[idx]) ? (tracksRaw[idx] as Record<string, unknown>) : undefined
-		const clockIds = sanitizeClockIdList(node?.["clockIds"])
-		if (!arraysEqual(clockIds, DEFAULT_STEPSEQ_CLOCK_IDS)) custom = true
-		return { clockIds }
-	})
-	return custom ? { tracks } : undefined
-}
 
 // Load interaction timing overrides, tolerating missing or malformed files.
 const loadSettings = (): Settings => {
@@ -328,127 +247,39 @@ const loadSettings = (): Settings => {
 	}
 }
 
-const loadSlotDefinitions = (): SlotDefinition[] => {
-	const defaults = SLOT_INDICES.map<SlotDefinition>(() => ({
-		pageName: DEFAULT_PAGE_NAME,
-		createPage: () => BasicPage(),
-		hasCustomColors: false,
-		hasCustomBrightness: false,
-	}))
+// Build per-slot page factories from a SystemConfig. Shared by boot and live
+// preset apply, so the same sanitize→factory path runs everywhere.
+const buildSlotDefinitions = (config: SystemConfig): SlotDefinition[] =>
+	SLOT_INDICES.map((slot) => buildSlotDefinition(config.slots[slotLabel(slot)]))
 
-	let parsed: unknown
-	try {
-		const raw = readFileSync(SLOTS_CONFIG_PATH, "utf8")
-		parsed = JSON.parse(raw)
-	} catch (err) {
-		const code = (err as NodeJS.ErrnoException)?.code
-		if (code && code !== "ENOENT") {
-			console.warn("[Slots] Failed to read configs/slots.json:", err)
-		}
-		return defaults
-	}
-
-	if (!isRecord(parsed)) return defaults
-
-	const slotsNode = isRecord(parsed.slots) ? (parsed.slots as Record<string, unknown>) : {}
-	const result: SlotDefinition[] = []
-
-	for (const slot of SLOT_INDICES) {
-		const label = slotLabel(slot)
-		const entry = isRecord(slotsNode[label]) ? slotsNode[label] : undefined
-		const rawPageName =
-			entry && typeof entry.page === "string" ? entry.page : DEFAULT_PAGE_NAME
-		const factory = PAGE_FACTORIES[rawPageName] ?? PAGE_FACTORIES[DEFAULT_PAGE_NAME]
-		const pageName = factory === PAGE_FACTORIES[rawPageName] ? rawPageName : DEFAULT_PAGE_NAME
-		if (factory !== PAGE_FACTORIES[rawPageName]) {
-			console.warn(
-				`[Slots] Slot ${label}: unknown page "${rawPageName}", defaulting to ${DEFAULT_PAGE_NAME}`
-			)
-		}
-
-		let hasCustomColors = false
-		let hasCustomBrightness = false
-		let pageConfig: unknown
-		if (pageName === "Basic") {
-			const configNode =
-				entry && isRecord(entry.config)
-					? (entry.config as Record<string, unknown>)
-					: undefined
-			const encoderColors = sanitizeEncoderColors(configNode?.encoderColors)
-			hasCustomColors = encoderColors !== undefined
-			const encoderBrightness = sanitizeEncoderBrightness(configNode?.encoderBrightness)
-			hasCustomBrightness = encoderBrightness !== undefined
-			pageConfig =
-				encoderColors || encoderBrightness
-					? {
-						encoderColors: encoderColors ? [...encoderColors] : undefined,
-						encoderBrightness: encoderBrightness
-							? [...encoderBrightness]
-							: undefined,
-					}
-					: undefined
-		} else if (pageName === "StepSeq") {
-			const configNode =
-				entry && isRecord(entry.config)
-					? (entry.config as Record<string, unknown>)
-					: undefined
-			pageConfig = sanitizeStepSeqConfig(configNode)
-		}
-
-		const createPage = () => {
-			if (pageName === "Basic") {
-				return factory(pageConfig)
-			}
-			if (pageName === "StepSeq") {
-				const cfg = pageConfig as StepSeqConfig | undefined
-				return factory(
-					cfg
-						? {
-							tracks: cfg.tracks?.map((t) => ({
-								clockIds: t.clockIds ? [...t.clockIds] : undefined,
-							})),
-						}
-						: undefined
-				)
-			}
-			return factory()
-		}
-
-		result.push({
-			pageName,
-			createPage,
-			hasCustomColors,
-			hasCustomBrightness,
-		})
-	}
-
-	return result
+const logSlotSummary = () => {
+	const pageSummary = SLOT_INDICES.map(
+		(slot, idx) => `${slotLabel(slot)}=${slotDefinitions[idx].pageName}`
+	).join(", ")
+	const customColorLabels = SLOT_INDICES.filter(
+		(_slot, idx) => slotDefinitions[idx].hasCustomColors
+	).map((slot) => slotLabel(slot))
+	const colorsSummary =
+		customColorLabels.length > 0 ? `custom on ${customColorLabels.join(",")}` : "default"
+	const customBrightnessLabels = SLOT_INDICES.filter(
+		(_slot, idx) => slotDefinitions[idx].hasCustomBrightness
+	).map((slot) => slotLabel(slot))
+	const brightnessSummary =
+		customBrightnessLabels.length > 0
+			? `custom on ${customBrightnessLabels.join(",")}`
+			: "default"
+	console.log(
+		`Slots: ${pageSummary} (colors: ${colorsSummary}; brightness: ${brightnessSummary})`
+	)
 }
 
-const slotDefinitions = loadSlotDefinitions()
-const slotPageNames = slotDefinitions.map((def) => def.pageName)
-const pageSummary = SLOT_INDICES.map(
-	(slot, idx) => `${slotLabel(slot)}=${slotDefinitions[idx].pageName}`
-).join(", ")
-const customColorLabels = SLOT_INDICES.filter(
-	(slot, idx) => slotDefinitions[idx].hasCustomColors
-).map((slot) => slotLabel(slot))
-const colorsSummary =
-	customColorLabels.length > 0
-		? `custom on ${customColorLabels.join(",")}`
-		: "default"
-
-const customBrightnessLabels = SLOT_INDICES.filter(
-	(slot, idx) => slotDefinitions[idx].hasCustomBrightness
-).map((slot) => slotLabel(slot))
-const brightnessSummary =
-	customBrightnessLabels.length > 0
-		? `custom on ${customBrightnessLabels.join(",")}`
-		: "default"
-
-console.log(
-	`Slots: ${pageSummary} (colors: ${colorsSummary}; brightness: ${brightnessSummary})`
-)
+// Active system configuration — mirrors configs/slots.json and is mutated live by
+// preset load / single-slot edits. slotDefinitions/slotPageNames are caches of it.
+let activeConfig: SystemConfig = readActiveConfig()
+let slotDefinitions: SlotDefinition[] = buildSlotDefinitions(activeConfig)
+let slotPageNames: string[] = slotDefinitions.map((def) => def.pageName)
+let activePresetName: string | null = activeConfig.activePreset ?? null
+logSlotSummary()
 
 const BASIC_ONLY_PATTERNS = [
 	/^\/config\/color\/map$/,
@@ -472,12 +303,8 @@ const allowBasicOnlyRoute = (slot: Slot, subPath: string): boolean => {
 	return false
 }
 
-const settings = loadSettings()
-const {
-	mainDoubleClickMs,
-	mainHoldThresholdMs,
-	debounceMs,
-} = settings.interaction
+// Mutable so the Global Settings UI can retune timings/fps live (read at use sites).
+let settings = loadSettings()
 
 const parseSlotLabel = (value: unknown): Slot | undefined => {
 	if (typeof value !== "string") return undefined
@@ -586,7 +413,8 @@ const pm = new PageManager(baseCtx, (_frame, reason) => {
 })
 
 // Fixed-rate render loop: the single output path to the device.
-const renderLoop = createRenderLoop({ fps: settings.render.fps, onFrame: renderTick })
+// Reassignable so a live fps change can rebuild the loop (see applyGlobalSettings).
+let renderLoop: RenderLoop = createRenderLoop({ fps: settings.render.fps, onFrame: renderTick })
 
 // Load & focus slot A (and remember which)
 void (async () => {
@@ -627,7 +455,10 @@ dec.onEvent((ev) => {
 
 			modifiers.globalRight = ev.down
 			const now = Date.now()
-			if (now - mainButtonState.lastEdgeAt < debounceMs && ev.down === mainButtonState.isDown)
+			if (
+				now - mainButtonState.lastEdgeAt < settings.interaction.debounceMs &&
+				ev.down === mainButtonState.isDown
+			)
 				return
 			mainButtonState.lastEdgeAt = now
 			mainButtonState.isDown = ev.down
@@ -639,13 +470,13 @@ dec.onEvent((ev) => {
 				mainButtonState.holdTimer = setTimeout(() => {
 					mainButtonState.holdTimer = null
 					activateOverlayMomentary()
-				}, mainHoldThresholdMs)
+				}, settings.interaction.mainHoldThresholdMs)
 				return
 			}
 
 			const pressDuration = now - mainButtonState.pressAt
 			clearMainHoldTimer()
-			if (pressDuration >= mainHoldThresholdMs || mainButtonState.holdActive) {
+			if (pressDuration >= settings.interaction.mainHoldThresholdMs || mainButtonState.holdActive) {
 				deactivateOverlayIfMomentary()
 				return
 			}
@@ -658,7 +489,7 @@ dec.onEvent((ev) => {
 
 			if (
 				mainButtonState.lastShortPressAt &&
-				now - mainButtonState.lastShortPressAt <= mainDoubleClickMs
+				now - mainButtonState.lastShortPressAt <= settings.interaction.mainDoubleClickMs
 			) {
 				mainButtonState.lastShortPressAt = 0
 				setOverlayLatch(true)
@@ -698,6 +529,98 @@ console.log(
 	'Daemon up. Using port "Midi Fighter Twister". Twist & press to test.'
 )
 
+// --- Presets & global settings -----------------------------------------------
+
+// Re-announce the page type for every slot (drives the UI focus grid + monitors).
+function broadcastPageTypes() {
+	for (const slot of SLOT_INDICES) {
+		emitOut(`/twister/out/page/${slotLabel(slot)}/type`, slotPageNames[slot])
+	}
+}
+
+// Push current preset list + active marker to all listeners.
+function broadcastPresetState() {
+	emitOut("/twister/out/preset/list", ...listPresets())
+	emitOut("/twister/out/preset/active", activePresetName ?? "")
+}
+
+// Apply a SystemConfig live: reload every slot's page, refresh caches, repaint.
+// Honors R10 — no direct device push; we set needsFocusPaint and let the loop flush.
+function applySystemConfig(
+	config: SystemConfig,
+	opts: { persist?: boolean; presetName?: string | null } = {}
+) {
+	activeConfig = sanitizeSystemConfig(config)
+	slotDefinitions = buildSlotDefinitions(activeConfig)
+	slotPageNames = slotDefinitions.map((def) => def.pageName)
+	SLOT_INDICES.forEach((slot, idx) => pm.load(slot, slotDefinitions[idx].createPage))
+	needsFocusPaint = true
+	logSlotSummary()
+	broadcastPageTypes()
+
+	if (opts.persist) {
+		activePresetName = opts.presetName ?? null
+		activeConfig.activePreset = activePresetName
+		writeActiveConfig(activeConfig)
+		emitOut("/twister/out/preset/active", activePresetName ?? "")
+	}
+}
+
+// Snapshot the live interface (soft capture: structural config, not knob/step values).
+function captureSystemConfig(): SystemConfig {
+	const slots = {} as Record<ReturnType<typeof slotLabel>, SlotConfig>
+	for (const slot of SLOT_INDICES) {
+		const label = slotLabel(slot)
+		const config = pm.serialize(slot)
+		slots[label] = config !== undefined ? { page: slotPageNames[slot], config } : { page: slotPageNames[slot] }
+	}
+	return sanitizeSystemConfig({ version: 1, slots })
+}
+
+function persistSettings(s: Settings) {
+	try {
+		writeFileSync(SETTINGS_CONFIG_PATH, `${JSON.stringify(s, null, "\t")}\n`)
+	} catch (err) {
+		console.warn("[Settings] Failed to write configs/settings.json:", err)
+	}
+}
+
+// Apply global settings live: persist, rebuild the render loop if fps changed.
+function applyGlobalSettings(next: Settings) {
+	const fpsChanged = next.render.fps !== settings.render.fps
+	settings = next
+	persistSettings(next)
+	if (fpsChanged) {
+		renderLoop.stop()
+		renderLoop = createRenderLoop({ fps: settings.render.fps, onFrame: renderTick })
+		needsFocusPaint = true
+		renderLoop.start()
+	}
+	emitOut("/twister/out/settings", JSON.stringify(settings))
+}
+
+function setSettingsKey(key: string, rawValue: unknown) {
+	const value = Number(rawValue)
+	if (!Number.isFinite(value)) return
+	const next: Settings = {
+		interaction: { ...settings.interaction },
+		render: { ...settings.render },
+	}
+	switch (key) {
+		case "mainDoubleClickMs":
+		case "mainHoldThresholdMs":
+		case "debounceMs":
+			next.interaction[key] = clamp(Math.round(value), 1, 5000)
+			break
+		case "fps":
+			next.render.fps = clamp(Math.round(value), 1, 120)
+			break
+		default:
+			return
+	}
+	applyGlobalSettings(next)
+}
+
 // Shared control router: both OSC input and the web UI dispatch through this,
 // so they speak one vocabulary (the /twister/in/... paths).
 function routeControl(path: string, args: any[]) {
@@ -724,6 +647,68 @@ function routeControl(path: string, args: any[]) {
 		for (const slot of SLOT_INDICES) {
 			if (isBasicSlot(slot)) pm.routeOscToPage(slot, "/dump", [])
 		}
+		return
+	}
+	// --- Presets ---
+	if (path === "/twister/in/preset/list") {
+		broadcastPresetState()
+		return
+	}
+	if (path === "/twister/in/preset/save") {
+		const name = args[0]
+		if (isValidPresetName(name)) {
+			const captured = captureSystemConfig()
+			if (writePreset(name, captured)) {
+				// Active config now equals the saved snapshot.
+				activeConfig = captured
+				activePresetName = name
+				activeConfig.activePreset = name
+				writeActiveConfig(activeConfig)
+				broadcastPresetState()
+			}
+		}
+		return
+	}
+	if (path === "/twister/in/preset/load") {
+		const name = args[0]
+		if (isValidPresetName(name)) {
+			const cfg = readPreset(name)
+			if (cfg) applySystemConfig(cfg, { persist: true, presetName: name })
+		}
+		broadcastPresetState()
+		return
+	}
+	if (path === "/twister/in/preset/delete") {
+		const name = args[0]
+		if (isValidPresetName(name)) {
+			deletePreset(name)
+			if (activePresetName === name) {
+				activePresetName = null
+				activeConfig.activePreset = null
+				writeActiveConfig(activeConfig)
+			}
+		}
+		broadcastPresetState()
+		return
+	}
+	// --- Single-slot live page re-assign: /twister/in/slot/<a-h>/page <PageName> ---
+	const slotPageMatch = path.match(/^\/twister\/in\/slot\/([a-hA-H])\/page$/)
+	if (slotPageMatch) {
+		const slot = slotFromLabel(slotPageMatch[1])
+		const pageName = args[0]
+		if (slot !== undefined && typeof pageName === "string" && PAGE_FACTORIES[pageName]) {
+			const nextSlots = { ...activeConfig.slots, [slotLabel(slot)]: { page: pageName } }
+			applySystemConfig({ version: 1, slots: nextSlots }, { persist: true, presetName: null })
+		}
+		return
+	}
+	// --- Global settings ---
+	if (path === "/twister/in/settings/get") {
+		emitOut("/twister/out/settings", JSON.stringify(settings))
+		return
+	}
+	if (path === "/twister/in/settings/set") {
+		if (typeof args[0] === "string") setSettingsKey(args[0], args[1])
 		return
 	}
 	// /twister/in/page/<slot>/...
@@ -753,6 +738,9 @@ if (uiEnabled) {
 			for (const slot of SLOT_INDICES) {
 				send(`/twister/out/page/${slotLabel(slot)}/type`, [slotPageNames[slot]])
 			}
+			send("/twister/out/preset/list", listPresets())
+			send("/twister/out/preset/active", [activePresetName ?? ""])
+			send("/twister/out/settings", [JSON.stringify(settings)])
 		},
 	})
 }

@@ -59,12 +59,25 @@ Out (core + page-specific):
 • /twister/out/page/<slot>/config/color/map <16 ints> → BasicPage palette dump (response to `/twister/in/dump/global`).
 • /twister/out/page/<slot>/index/all/value <16 floats> → BasicPage normalized value dump.
 • /twister/out/focus/page <slotLetter> → emitted when focus changes (OSC + web UI), so external surfaces can track the focused slot.
+• /twister/out/preset/list <names…> → saved preset names (on connect, and after save/load/delete).
+• /twister/out/preset/active <name|""> → name of the active preset, "" when custom/unsaved.
+• /twister/out/settings <json> → current global settings (interaction timings + render.fps) as a JSON string.
 • Example (BasicPage): /twister/out/page/a/index/1/value 0.77380 (≤ 5 decimals).
 
 In (core):
 • /twister/in/focus/page <slotLetter> → focus page by letter (`a`–`h`).
 • /twister/in/clock <int> → external clock tick broadcast to all pages (StepSeqPage consumes IDs 0–3).
 • /twister/in/dump/global → request palette/value dumps from Basic pages.
+
+In (presets & global settings):
+• /twister/in/preset/list → request the preset list (replies /twister/out/preset/list).
+• /twister/in/preset/save <name> → snapshot the live interface (soft capture: structural config — page per slot, palette/brightness, clock routing — NOT knob/step values) to configs/presets/<name>.json and mark it active.
+• /twister/in/preset/load <name> → apply a saved preset live (reloads all slots) and persist it to slots.json.
+• /twister/in/preset/delete <name> → delete configs/presets/<name>.json.
+• /twister/in/slot/<slot>/page <PageName> → reassign one slot's page live (Basic|Gesture|StepSeq); persists to slots.json and clears the active-preset marker.
+• /twister/in/settings/get → request current global settings (replies /twister/out/settings).
+• /twister/in/settings/set <key> <value> → set one global setting live (keys: mainDoubleClickMs|mainHoldThresholdMs|debounceMs|fps); persists to settings.json; an fps change rebuilds the render loop.
+• Names are restricted to [A-Za-z0-9 _-]{1,48} (safe filename; maps cleanly to a Max patch name later).
 
 In (page):
 • /twister/in/page/<slot>/index/<id>/set <normalized> → set internal value (page decides if it’s allowed; e.g., GesturePage only in standby).
@@ -84,7 +97,8 @@ Control surface (OSC + optional web UI)
 • All outbound twister messages go through emitOut(): out to OSC/UDP AND mirrored to any connected web UI.
 • Web UI is OFF by default; enable with --ui or TWISTER_UI=1 (port via --ui-port / TWISTER_UI_PORT, default 57190). The daemon is fully headless without it.
 • Transport: there is NO internal clock. The pulse generator lives in the web UI (BPM, play/stop, skip %, per-pulse clock id 0–3), sending /twister/in/clock <id>. Browser timer jitter is acceptable for irregular/experimental use; move server-side only if tight timing is needed.
-• src/io/controlServer.ts: tiny HTTP (serves web/index.html) + WebSocket. WS protocol mirrors OSC as JSON { path, args }. On connect it pushes a state snapshot (current focus + each slot's page type) so a late-joining UI is correct immediately.
+• src/io/controlServer.ts: tiny HTTP (serves web/index.html) + WebSocket. WS protocol mirrors OSC as JSON { path, args }. On connect it pushes a state snapshot (current focus, each slot's page type, preset list + active preset, and global settings) so a late-joining UI is correct immediately.
+• Global presets: a preset is an interface-only SystemConfig (slot→page + per-page config), one file per preset under configs/presets/. The active config lives in configs/slots.json. src/core/systemConfig.ts owns sanitize→factory (shared by boot + live apply); src/core/presetStore.ts is the filesystem layer. applySystemConfig() in cli/index.ts reloads pages live via PageManager.load and repaints through the render loop (no direct device push). This is the channel a Max patch will use to set the interface per open patch.
 
 ⸻
 
@@ -95,6 +109,7 @@ Page model
 • setDirty() requests a render of this page; if focused, it will push immediately.
 • Lifecycle: init(ctx), onFocus(), onBlur(), dispose().
 • Handlers: onEvent(ev, ctx), onOsc(path, args, ctx), render(ctx) → LedFrame | undefined.
+• serialize() (optional) → page's structural config for preset capture (e.g. Basic {encoderColors,encoderBrightness}, StepSeq {tracks:[{clockIds}]}); MUST exclude transient runtime values (encoder positions, sequencer steps, playhead).
 • Background behavior: pages may keep timers running while unfocused (e.g., GesturePage playback); unfocused pages update desired frames but those frames are not sent until focused.
 
 BasicPage (reference)
@@ -166,7 +181,7 @@ Boot splash (startup warm-up)
 
 Config (JSON)
 • Color indices, channel/CC/note map, and any optional encoder index offset/map are defined in JSON.
-• configs/slots.json selects page prototypes (A–H) and optional BasicPage encoder color/brightness palettes.
+• configs/slots.json is the active SystemConfig: selects page prototypes (A–H), optional BasicPage encoder color/brightness palettes, and an optional `activePreset` marker. configs/presets/<name>.json hold saved interface-only SystemConfigs (same shape, no activePreset).
 • StepSeq slots may provide per-track clock lists (e.g., `{"tracks":[{"clockIds":[0,2,5]},...]}`) to decide which `/twister/in/clock` IDs advance each track (default 0).
 • configs/settings.json defines interaction timings (double-click window, hold threshold, debounce) for the Main overlay trigger, and render.fps (render-loop rate, default 30, clamped 1..120).
 • Only the MIDI driver knows about device numbers & channels; core code works with human-readable values:

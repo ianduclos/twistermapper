@@ -1,16 +1,21 @@
 {
 	"version": 1,
 	"slots": {
-		"a": { "page": "Basic" },
-		"b": {
+		"a": { "page": "Gesture" },
+		"b": { "page": "Gesture" },
+		"c": { "page": "Gesture" },
+		"d": {
 			"page": "Basic",
 			"config": {
 				"encoderColors": [
-					110, 1, 60, 66, 74, 80, 33, 20, 110, 1, 60, 66, 74, 80, 33, 20
+					74, 74, 60, 60, 85, 85, 33, 33, 60, 60, 60, 66, 1, 1, 1, 110
 				]
 			}
 		},
-		"c": {
+		"e": {
+			"page": "Basic"
+		},
+		"f": {
 			"page": "Basic",
 			"config": {
 				"encoderColors": [
@@ -18,10 +23,7 @@
 				]
 			}
 		},
-		"d": { "page": "Basic" },
-		"e": { "page": "Gesture" },
-		"f": { "page": "Gesture" },
-		"g": { "page": "Gesture" },
+		"g": { "page": "Basic" },
 		"h": { "page": "StepSeq" }
 	}
 }
