@@ -4,6 +4,7 @@ import { resolve as resolvePath } from "node:path"
 import midiLib from "@julusian/midi"
 import { NodeMidiDriver } from "../io/midiDriver.js" // real driver from Codex task
 import { LedReconciler } from "../render/ledReconciler.js"
+import { createRenderLoop } from "../render/renderLoop.js"
 import { PageManager } from "../core/pageManager.js"
 import { BasicPage } from "../pages/basic.js"
 import { GesturePage } from "../pages/gestures.js"
@@ -42,6 +43,10 @@ console.log("MIDI IN :", midiIo.getInPortName?.() ?? "(unknown)")
 console.log("MIDI OUT:", midiIo.getOutPortName?.() ?? "(unknown)")
 
 let rec = new LedReconciler(midiIo)
+
+// Render-loop output state: renderTick() pushes the current desired frame each
+// frame; this flag asks the next frame to be a fast focus paint (128-msg burst).
+let needsFocusPaint = false
 
 // --- OSC transport (defaults: in 57121, out 57120) ---
 const osc = createOsc()
@@ -120,6 +125,9 @@ type Settings = {
 		mainHoldThresholdMs: number
 		debounceMs: number
 	}
+	render: {
+		fps: number
+	}
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -127,6 +135,9 @@ const DEFAULT_SETTINGS: Settings = {
 		mainDoubleClickMs: 320,
 		mainHoldThresholdMs: 200,
 		debounceMs: 20,
+	},
+	render: {
+		fps: 30,
 	},
 }
 
@@ -240,6 +251,9 @@ const loadSettings = (): Settings => {
 	const interactionNode = isRecord(parsed.interaction)
 		? (parsed.interaction as Record<string, unknown>)
 		: {}
+	const renderNode = isRecord(parsed.render)
+		? (parsed.render as Record<string, unknown>)
+		: {}
 
 	const cleanNumber = (value: unknown, fallback: number) => {
 		if (typeof value === "number" && Number.isFinite(value) && value > 0) {
@@ -264,6 +278,13 @@ const loadSettings = (): Settings => {
 			debounceMs: cleanNumber(
 				interactionNode.debounceMs,
 				DEFAULT_SETTINGS.interaction.debounceMs
+			),
+		},
+		render: {
+			fps: clamp(
+				cleanNumber(renderNode.fps, DEFAULT_SETTINGS.render.fps),
+				1,
+				120
 			),
 		},
 	}
@@ -453,14 +474,32 @@ function renderOverlay(focus: Slot): LedFrame {
 	return frame
 }
 
+// Output is driven by the render loop (see renderTick below), not by direct
+// pushes. These helpers just request that the next frame be a fast focus paint;
+// renderTick() reads whatever the "current desired" frame is (overlay or page).
 function paintOverlay() {
-	rec.beginFocusPaint()
-	rec.push(renderOverlay(focusedSlot))
+	needsFocusPaint = true
 }
 
 function paintFocusedPage() {
-	rec.beginFocusPaint()
-	rec.push(pm.getDesiredFocused())
+	needsFocusPaint = true
+}
+
+// The frame the device should currently show: overlay owns the LEDs while active.
+function currentDesired(): LedFrame | undefined {
+	return overlayState.active ? renderOverlay(focusedSlot) : pm.getDesiredFocused()
+}
+
+// One render frame: push the current desired state. The reconciler diffs, so an
+// unchanged frame sends zero MIDI; a fast focus paint is requested via the flag.
+function renderTick() {
+	const frame = currentDesired()
+	if (!frame) return
+	if (needsFocusPaint) {
+		rec.beginFocusPaint()
+		needsFocusPaint = false
+	}
+	rec.push(frame)
 }
 
 function clearMainHoldTimer() {
@@ -500,12 +539,16 @@ function setOverlayLatch(next: boolean) {
 	}
 }
 
-// ---- Page manager: guard pushes while overlay is active ----
-const pm = new PageManager(baseCtx, (frame, reason) => {
-	if (overlayState.active) return // overlay owns the LEDs
-	if (reason === "focus") rec.beginFocusPaint()
-	rec.push(frame)
+// ---- Page manager ----
+// The page manager keeps each page's desired frame up to date; the render loop
+// (renderTick) is the single thing that pushes to the device. The only thing we
+// need from this callback is to request a fast focus paint on focus changes.
+const pm = new PageManager(baseCtx, (_frame, reason) => {
+	if (reason === "focus") needsFocusPaint = true
 })
+
+// Fixed-rate render loop: the single output path to the device.
+const renderLoop = createRenderLoop({ fps: settings.render.fps, onFrame: renderTick })
 
 // Load & focus slot A (and remember which)
 void (async () => {
@@ -515,6 +558,9 @@ void (async () => {
 	})
 	pm.focus(0 as Slot)
 	settleFocused(pm, rec)
+	// Hand ongoing output to the render loop now that the splash/settle are done.
+	needsFocusPaint = true
+	renderLoop.start()
 	startTwisterWatcher(pm)
 })()
 
@@ -527,64 +573,66 @@ dec.setShiftInterceptGlobals(false)
 
 dec.onEvent((ev) => {
 	// Keep modifiers updated
+	let routeToPage = false
 	switch (ev.type) {
 		case "side/shift":
 			if (ev.side === "left") modifiers.shiftLeft = ev.down
 			else modifiers.shiftRight = ev.down
-			return
+			routeToPage = true
+			break
 
-	case "side/global":
-		if (ev.side === "left") {
-			modifiers.globalLeft = ev.down
-			return
-		}
+		case "side/global":
+			if (ev.side === "left") {
+				modifiers.globalLeft = ev.down
+				return
+			}
 
-		modifiers.globalRight = ev.down
-		const now = Date.now()
-		if (now - mainButtonState.lastEdgeAt < debounceMs && ev.down === mainButtonState.isDown)
-			return
-		mainButtonState.lastEdgeAt = now
-		mainButtonState.isDown = ev.down
+			modifiers.globalRight = ev.down
+			const now = Date.now()
+			if (now - mainButtonState.lastEdgeAt < debounceMs && ev.down === mainButtonState.isDown)
+				return
+			mainButtonState.lastEdgeAt = now
+			mainButtonState.isDown = ev.down
 
-		if (ev.down) {
-			mainButtonState.pressAt = now
-			mainButtonState.holdActive = false
+			if (ev.down) {
+				mainButtonState.pressAt = now
+				mainButtonState.holdActive = false
+				clearMainHoldTimer()
+				mainButtonState.holdTimer = setTimeout(() => {
+					mainButtonState.holdTimer = null
+					activateOverlayMomentary()
+				}, mainHoldThresholdMs)
+				return
+			}
+
+			const pressDuration = now - mainButtonState.pressAt
 			clearMainHoldTimer()
-			mainButtonState.holdTimer = setTimeout(() => {
-				mainButtonState.holdTimer = null
-				activateOverlayMomentary()
-			}, mainHoldThresholdMs)
+			if (pressDuration >= mainHoldThresholdMs || mainButtonState.holdActive) {
+				deactivateOverlayIfMomentary()
+				return
+			}
+
+			if (overlayState.latched) {
+				setOverlayLatch(false)
+				mainButtonState.lastShortPressAt = 0
+				return
+			}
+
+			if (
+				mainButtonState.lastShortPressAt &&
+				now - mainButtonState.lastShortPressAt <= mainDoubleClickMs
+			) {
+				mainButtonState.lastShortPressAt = 0
+				setOverlayLatch(true)
+				return
+			}
+
+			mainButtonState.lastShortPressAt = now
 			return
-		}
 
-		const pressDuration = now - mainButtonState.pressAt
-		clearMainHoldTimer()
-		if (pressDuration >= mainHoldThresholdMs || mainButtonState.holdActive) {
-			deactivateOverlayIfMomentary()
-			return
-		}
-
-		if (overlayState.latched) {
-			setOverlayLatch(false)
-			mainButtonState.lastShortPressAt = 0
-			return
-		}
-
-		if (
-			mainButtonState.lastShortPressAt &&
-			now - mainButtonState.lastShortPressAt <= mainDoubleClickMs
-		) {
-			mainButtonState.lastShortPressAt = 0
-			setOverlayLatch(true)
-			return
-		}
-
-		mainButtonState.lastShortPressAt = now
-		return
-
-	default:
-		break
-}
+		default:
+			break
+	}
 
 	// While overlay is active, only handle encoder button presses 0..7
 	if (overlayState.active) {
@@ -600,7 +648,7 @@ dec.onEvent((ev) => {
 	}
 
 	// Normal routed events when overlay is not active
-	if (ev.type === "encoder/turn" || ev.type === "encoder/press") {
+	if (routeToPage || ev.type === "encoder/turn" || ev.type === "encoder/press") {
 		pm.onEvent(ev)
 	}
 })
@@ -655,6 +703,8 @@ console.log(
 )
 
 async function rebuildIoAndSplash(pm: PageManager) {
+	// Pause the render loop so it doesn't fight the splash for the new device.
+	renderLoop.stop()
 	try {
 		midiIo.close()
 	} catch {
@@ -665,7 +715,9 @@ async function rebuildIoAndSplash(pm: PageManager) {
 	midiIo.onMessage((msg) => dec.pushRaw(msg))
 	await runRandomSplash(rec)
 	settleFocused(pm, rec)
-	if (overlayState.active) paintOverlay()
+	// Resume steady-state output; first frame repaints with the new reconciler.
+	needsFocusPaint = true
+	renderLoop.start()
 }
 
 function startTwisterWatcher(pm: PageManager) {

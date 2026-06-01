@@ -119,6 +119,13 @@ Main overlay (page focus selector)
 
 ⸻
 
+Render loop (single output path)
+• A fixed-rate render loop (default 30 FPS; configs/settings.json → render.fps, clamped 1..120) is the ONLY thing that pushes to the device (src/render/renderLoop.ts, wired in src/cli/index.ts).
+• Each frame it pushes the "current desired" frame: the overlay frame while the overlay is active, otherwise the focused page's desired frame. The reconciler diffs, so an unchanged frame sends zero MIDI.
+• Input events, OSC, clock ticks, and setDirty() update page desired state but DO NOT push directly — they are coalesced into the next frame. This bounds output to the rate caps and makes the loop its own self-drain (the reconciler keeps unsent work pending and recomputes from the latest desired each frame).
+• Only LED/MIDI output is frame-gated. OSC out (e.g. BasicPage value broadcasts) still happens immediately inside page handlers, so DAW-facing data stays realtime.
+• Focus/overlay transitions request a one-time fast focus paint (128-msg burst, beginFocusPaint) so page switches snap. The loop is paused during boot splash and device hotplug so the splash isn't fought.
+
 Renderer & rate limits
 • Keep a per-encoder device cache (LedFrame) for last-sent state.
 • Build a pending diff per encoder and send only changed fields.
@@ -136,7 +143,7 @@ Rate limits (initial):
 • On focus, beginFocusPaint() allows a one-time larger burst up to 128 to “paint” fast.
 
 Draining pending work:
-• If a burst/rolling cap prevents sending the full diff, keep the remaining per-encoder changes pending and schedule a small self-drain (~5 ms) to continue flushing the latest desired frame until the queue is empty.
+• If a burst/rolling cap prevents sending the full diff, keep the remaining per-encoder changes pending. The render loop is the drain: the next frame re-pushes the latest desired frame and the reconciler continues flushing from its pending state until the queue is empty. (The reconciler does not run its own timer; the loop paces it.)
 
 ⸻
 
@@ -151,7 +158,7 @@ Config (JSON)
 • Color indices, channel/CC/note map, and any optional encoder index offset/map are defined in JSON.
 • configs/slots.json selects page prototypes (A–H) and optional BasicPage encoder color/brightness palettes.
 • StepSeq slots may provide per-track clock lists (e.g., `{"tracks":[{"clockIds":[0,2,5]},...]}`) to decide which `/twister/in/clock` IDs advance each track (default 0).
-• configs/settings.json defines interaction timings (double-click window, hold threshold, debounce) for the Main overlay trigger.
+• configs/settings.json defines interaction timings (double-click window, hold threshold, debounce) for the Main overlay trigger, and render.fps (render-loop rate, default 30, clamped 1..120).
 • Only the MIDI driver knows about device numbers & channels; core code works with human-readable values:
 • LED brightness: human 0..29 → device 18..47.
 • Ring brightness: human 1..31 → device 65..95.
@@ -162,7 +169,7 @@ Config (JSON)
 Dirty & OSC semantics
 • routeOscToPage(slot, path, args) calls page.onOsc, then re-renders that page.
 • PageContext.setDirty() asks PageManager to re-render the calling page.
-• If the re-rendered page is focused, push the new desired frame to the LedReconciler immediately. If not focused, store the desired frame (LEDs won’t be sent until that page is focused).
+• Re-rendering updates the page's stored desired frame. It is NOT pushed to the device on the spot — the render loop pushes the focused page's (or overlay's) desired frame on the next frame (see "Render loop"). Unfocused pages just keep their desired frame updated; it is sent once they become focused.
 
 ⸻
 
@@ -188,9 +195,10 @@ Rules (IDs)
 • R4 Flush order: ledB → ringB → rgb → ring.
 • R5 Rate caps: 64/5ms, 400/sec, 128 initial focus burst.
 • R6 Focus routing: only focused page handles input; shift intercepts globals.
-• R7 Dirty/OSC: setDirty & routeOscToPage re-render; push if focused.
+• R7 Dirty/OSC: setDirty & routeOscToPage re-render (update desired); the render loop pushes the focused/overlay frame each frame. No direct pushes from events.
 • R8 OSC floats: ≤ 5 decimals; normalized 0..1.
 • R9 Pages may run off-focus: timers okay; LEDs only sent for focused page.
+• R10 Render loop: a fixed-rate loop (default 30 FPS, render.fps) is the single output path; it coalesces state into one diff/frame and is its own self-drain.
 
 ⸻
 

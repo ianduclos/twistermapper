@@ -3,5 +3,8 @@
 		"mainDoubleClickMs": 320,
 		"mainHoldThresholdMs": 170,
 		"debounceMs": 20
+	},
+	"render": {
+		"fps": 30
 	}
 }
