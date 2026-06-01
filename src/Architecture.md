@@ -160,7 +160,7 @@ Render loop (single output path)
 • Each frame it pushes the "current desired" frame: the overlay frame while the overlay is active, otherwise the focused page's desired frame. The reconciler diffs, so an unchanged frame sends zero MIDI.
 • Input events, OSC, clock ticks, and setDirty() update page desired state but DO NOT push directly — they are coalesced into the next frame. This bounds output to the rate caps and makes the loop its own self-drain (the reconciler keeps unsent work pending and recomputes from the latest desired each frame).
 • Only LED/MIDI output is frame-gated. OSC out (e.g. BasicPage value broadcasts) still happens immediately inside page handlers, so DAW-facing data stays realtime.
-• Focus/overlay transitions request a one-time fast focus paint (128-msg burst, beginFocusPaint) so page switches snap. The loop is paused during boot splash and device hotplug so the splash isn't fought.
+• Focus/overlay transitions request a one-time fast focus paint (128-msg burst, beginFocusPaint) so page switches snap. The loop is paused during boot splash and device hotplug so the splash isn't fought. (Note: a forced full repaint on page change was tried and reverted — the ~64-msg burst floods the newer firmware and drops LED brightness; diff-on-focus is the working behavior.)
 
 Renderer & rate limits
 • Keep a per-encoder device cache (LedFrame) for last-sent state.
