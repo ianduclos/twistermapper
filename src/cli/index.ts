@@ -293,6 +293,7 @@ const matchesBasicOnlyPath = (path: string): boolean =>
 	BASIC_ONLY_PATTERNS.some((regex) => regex.test(path))
 
 const isBasicSlot = (slot: Slot) => slotPageNames[slot] === "Basic"
+const isMorphSlot = (slot: Slot) => slotPageNames[slot] === "Morph"
 
 const allowBasicOnlyRoute = (slot: Slot, subPath: string): boolean => {
 	if (!matchesBasicOnlyPath(subPath)) return true
@@ -638,10 +639,11 @@ function routeControl(path: string, args: any[]) {
 		}
 		return
 	}
-	// /twister/in/dump/global → request palette/value dumps from Basic pages
+	// /twister/in/dump/global → request dumps from pages that support /dump
+	// (Basic: palette/values; Morph: scene vectors).
 	if (path === "/twister/in/dump/global") {
 		for (const slot of SLOT_INDICES) {
-			if (isBasicSlot(slot)) pm.routeOscToPage(slot, "/dump", [])
+			if (isBasicSlot(slot) || isMorphSlot(slot)) pm.routeOscToPage(slot, "/dump", [])
 		}
 		return
 	}

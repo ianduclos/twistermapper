@@ -67,7 +67,7 @@ Out (core + page-specific):
 In (core):
 • /twister/in/focus/page <slotLetter> → focus page by letter (`a`–`h`).
 • /twister/in/clock <int> → external clock tick broadcast to all pages (StepSeqPage consumes IDs 0–3).
-• /twister/in/dump/global → request palette/value dumps from Basic pages.
+• /twister/in/dump/global → request dumps from pages that support it (Basic: palette/values; Morph: scene vectors).
 
 In (presets & global settings):
 • /twister/in/preset/list → request the preset list (replies /twister/out/preset/list).
@@ -85,6 +85,7 @@ In (page):
 • /twister/in/page/<slot>/config/color/enc/<id>/set <color> → update a single BasicPage encoder color.
 • /twister/in/page/<slot>/config/colorbrightness/map <16 ints> → replace BasicPage encoder brightness map.
 • /twister/in/page/<slot>/config/colorbrightness/enc/<id>/set <int> → update a single BasicPage encoder brightness.
+• /twister/in/page/<slot>/scene/<k>/set <12 floats> → restore MorphPage scene k (k 0–3); ignored if the slot isn't MorphPage.
 
 OSC numeric rules:
 • Floats emitted with max 5 decimals.
@@ -134,6 +135,16 @@ StepSeqPage (clocked 4-track sequencer)
 • Encoders 4–15 display the highlighted track’s 12 steps: loop inclusion uses dim/bright states, playhead flashes at track color+13 and brightness 29. Holding right shift swaps the view to probability percentages (rings scale 0–100%).
 • Turning step encoders edits values in normal mode; with right shift held they adjust that step’s probability (0–100%). Top encoders 0–3 adjust all probabilities within the track while shift is held. Pressing steps sets loop ends or ranges (press+press chord). Loop edits keep playhead inside bounds and can trigger immediate output updates.
 • Step button presses also broadcast `/twister/out/page/<slot>/index/<id>/press <1|0>`; page keeps running while unfocused so clock ticks advance playheads regardless of focus.
+
+⸻
+
+MorphPage (4-corner vector morph)
+• Top 12 encoders (0–11) are the morph OUTPUT (12 values); bottom 4 (12–15) are scene weights. Four stored "scenes" (12 values each) blend by normalized weighted average — `out[i] = Σ(aₖ·Sₖ[i]) / Σaₖ` with `aₖ = weight/127` — matching Max `pattrstorage` interpolation, so the weights map straight onto a pattr recall.
+• Phantom "live scene": the currently dialed output P is an implicit anchor with weight `aₚ = max(0, 1 − Σaₖ)`. At rest output = P (no jump on first touch); turning a weight up dissolves the phantom smoothly, and once Σaₖ ≥ 1 you're in the pure 4-scene field.
+• Turning a top encoder grabs the current output as the new P, zeros the weights, and applies the edit (sound stays continuous). Turning a bottom encoder adjusts that weight.
+• Press a bottom encoder = hard recall (weight=max, others 0 → that scene). Shift+press = save current output into that scene (the encoder pulses to confirm). Bottom presses broadcast `/twister/out/page/<slot>/index/<id>/press <1|0>`.
+• LEDs: top rings = output value (uniform color); bottom rings = weight, one color per scene, dominant scene brightest.
+• OSC out: `/twister/out/page/<slot>/index/<0–11>/value` (outputs) and `/index/<12–15>/value` (weights). Persistence is Max's job (no serialize): on `/dump` it emits `/twister/out/page/<slot>/scene/<k>/values <12 floats>` for k=0–3; `/twister/in/page/<slot>/scene/<k>/set <12 floats>` restores a scene.
 
 ⸻
 

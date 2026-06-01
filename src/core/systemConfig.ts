@@ -15,6 +15,7 @@
 
 import { BasicPage, type BasicPageConfig } from "../pages/basic.js"
 import { GesturePage } from "../pages/gestures.js"
+import { MorphPage } from "../pages/morph.js"
 import { StepSeqPage, type StepSeqConfig } from "../pages/stepSeq.js"
 import { clamp } from "../util/scale.js"
 import {
@@ -52,6 +53,7 @@ type PageFactory = (config?: unknown) => Page
 export const PAGE_FACTORIES: Record<string, PageFactory> = {
 	Basic: (config?: unknown) => BasicPage(config as BasicPageConfig | undefined),
 	Gesture: () => GesturePage(),
+	Morph: () => MorphPage(),
 	StepSeq: (config?: unknown) => StepSeqPage(config as StepSeqConfig | undefined),
 }
 

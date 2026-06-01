@@ -19,9 +19,10 @@ This project renders the MIDI Fighter Twister headlessly. Page prototypes define
 - Use `ctx.setDirty()` whenever asynchronous operations (timers, OSC callbacks) change state.
 - Clean up resources (timers, intervals, listeners) inside `dispose`.
 
-## 4. Wire the Page into the CLI
-- Import the new page in `src/cli/index.ts` and register it in `PAGE_FACTORIES`.
-- If the page needs configuration, extend `BasicPageConfig`-style sanitizers or introduce a new config parser near the slots loader.
+## 4. Register the Page
+- Import the new page in `src/core/systemConfig.ts` and add it to `PAGE_FACTORIES` (this is shared by boot and live preset apply; the page name string here is what `slots.json`/presets reference).
+- If the page needs configuration, extend the sanitizers in `systemConfig.ts` (`sanitizePageConfig`) following the Basic/StepSeq pattern.
+- For Max-backed state (like MorphPage scenes), prefer a `/dump` responder + a `/<thing>/set` OSC-in route over `serialize()`, so Max owns persistence.
 - Update `configs/slots.json` to point any slots at the new type (e.g., `{ "page": "YourPage" }`).
 - Provide sensible defaults so missing config entries fallback gracefully.
 
