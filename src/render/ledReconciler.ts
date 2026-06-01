@@ -253,9 +253,15 @@ export class LedReconciler {
 	}
 
 	private pruneSentTimestamps(now: number) {
-		while (this.sentTimestamps.length && now - this.sentTimestamps[0] > 1000) {
-			this.sentTimestamps.shift()
+		// Drop everything older than 1s in a single splice (vs. O(n) shift per entry).
+		let expired = 0
+		while (
+			expired < this.sentTimestamps.length &&
+			now - this.sentTimestamps[expired] > 1000
+		) {
+			expired++
 		}
+		if (expired > 0) this.sentTimestamps.splice(0, expired)
 	}
 
 	private ensureBurstWindow(now: number) {

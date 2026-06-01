@@ -531,32 +531,28 @@ console.log(
 
 // --- Presets & global settings -----------------------------------------------
 
-// Re-announce the page type for every slot (drives the UI focus grid + monitors).
-function broadcastPageTypes() {
-	for (const slot of SLOT_INDICES) {
-		emitOut(`/twister/out/page/${slotLabel(slot)}/type`, slotPageNames[slot])
-	}
-}
-
 // Push current preset list + active marker to all listeners.
 function broadcastPresetState() {
 	emitOut("/twister/out/preset/list", ...listPresets())
 	emitOut("/twister/out/preset/active", activePresetName ?? "")
 }
 
-// Apply a SystemConfig live: reload every slot's page, refresh caches, repaint.
-// Honors R10 — no direct device push; we set needsFocusPaint and let the loop flush.
+// Apply a SystemConfig live, reloading the given slots' pages (default: all, for
+// preset load). A single-slot edit passes only that slot so the other pages keep
+// their live runtime state. Reloaded pages re-emit their /type on init, so no
+// separate type broadcast is needed. Honors R10 — no direct device push; we set
+// needsFocusPaint and let the loop flush.
 function applySystemConfig(
 	config: SystemConfig,
-	opts: { persist?: boolean; presetName?: string | null } = {}
+	opts: { persist?: boolean; presetName?: string | null; reloadSlots?: readonly Slot[] } = {}
 ) {
 	activeConfig = sanitizeSystemConfig(config)
 	slotDefinitions = buildSlotDefinitions(activeConfig)
 	slotPageNames = slotDefinitions.map((def) => def.pageName)
-	SLOT_INDICES.forEach((slot, idx) => pm.load(slot, slotDefinitions[idx].createPage))
-	needsFocusPaint = true
+	const reload = opts.reloadSlots ?? SLOT_INDICES
+	for (const slot of reload) pm.load(slot, slotDefinitions[slot].createPage)
+	if (reload.includes(focusedSlot)) needsFocusPaint = true
 	logSlotSummary()
-	broadcastPageTypes()
 
 	if (opts.persist) {
 		activePresetName = opts.presetName ?? null
@@ -698,7 +694,11 @@ function routeControl(path: string, args: any[]) {
 		const pageName = args[0]
 		if (slot !== undefined && typeof pageName === "string" && PAGE_FACTORIES[pageName]) {
 			const nextSlots = { ...activeConfig.slots, [slotLabel(slot)]: { page: pageName } }
-			applySystemConfig({ version: 1, slots: nextSlots }, { persist: true, presetName: null })
+			// Reload only this slot so the other pages keep their live runtime state.
+			applySystemConfig(
+				{ version: 1, slots: nextSlots },
+				{ persist: true, presetName: null, reloadSlots: [slot] }
+			)
 		}
 		return
 	}

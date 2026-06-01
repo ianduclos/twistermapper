@@ -27,6 +27,17 @@ Original Phase 2 design notes (for reference):
 - `web/index.html` (no build step): **pulse generator** (BPM, play/stop, skip/irregular, clock-id select), **A–H focus buttons**, **live monitor** (page type + values + pulse state).
 - Timing note: browser `setInterval` jitters / throttles when backgrounded. Fine for irregular/experimental use; if tight timing is needed later, move the *scheduler* server-side while keeping the *pattern* defined in the UI.
 
+## Phase 3 — Global presets — DONE (2026-06-01)
+Named, swappable whole-system layouts (page per slot + per-page config), saved/loaded live from the web UI over the same `/twister/in/...` vocabulary (so a Max patch can later set the interface per open patch). Shipped: `src/core/systemConfig.ts` (shared sanitize→factory, used at boot + live apply), `src/core/presetStore.ts` (one file per preset under `configs/presets/`, active config in `slots.json`, safe-name validation), optional `Page.serialize()` (soft capture — structural config only, not knob/step values) on Basic + StepSeq, `applySystemConfig`/`captureSystemConfig` in `cli/index.ts`, routes `preset/list|save|load|delete`, `slot/<a-h>/page`, `settings/get|set`, and a UI split into **Control** / **Setup** tabs. Verified end-to-end over WS.
+
+## Known issues / follow-ups
+- ~~**Single-slot page change resets all 8 pages**~~ **FIXED (2026-06-01).** `applySystemConfig` now takes `reloadSlots` (default all, for preset load); the `slot/<x>/page` route passes only the edited slot, so the other pages keep their live runtime state. Verified: setting a value on slot D survives changing slot C's page.
+- ~~Minor: double page-type broadcast~~ **FIXED (2026-06-01).** Dropped `broadcastPageTypes()`; reloaded pages already re-emit `/type` on `init()`.
+- Micro-opt (2026-06-01): `ledReconciler.pruneSentTimestamps` now drops expired entries with one `splice` instead of O(n) `shift` per entry (hot path, ~400 sends/sec).
+
+## Performance headroom (assessed 2026-06-01)
+The daemon is extremely light: per 30fps frame it does a cached-frame fetch + 16-encoder field diff + sort of only changed encoders → microseconds, well under 1% of a core. Max DSP runs in its own process/thread, so no CPU starvation. The real ceiling is **MIDI LED throughput** (≤400 msgs/sec, intrinsic to MFT firmware), not CPU. More intensive pages are fine provided: (1) page event handlers stay non-blocking (chunk/defer any multi-ms compute — single event loop), and (2) expect LED *update rate* (not compute) to be throughput-capped.
+
 ## Ground rules
 - Each phase is its own commit with tests green and `src/Architecture.md` updated in the same commit.
 - Existing page semantics unchanged; we add output scheduling + control inputs.
