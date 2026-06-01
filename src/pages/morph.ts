@@ -24,6 +24,7 @@ const SCENE_COUNT = 4
 const WEIGHT_OFFSET = 12 // encoders 12..15 are the scene weights
 
 const TOP_COLOR = 1 // blue — outputs
+const LOCK_COLOR = 77 // reddish orange — locked (held against morph) outputs
 const SCENE_COLORS = [80, 60, 66, 110] as const // red, green, yellow, purple
 const TOP_BRIGHTNESS = 6
 const SCENE_BRIGHTNESS_IDLE = 10
@@ -35,6 +36,8 @@ export function MorphPage(): Page {
 	const scenes = Array.from({ length: SCENE_COUNT }, () => new Array<number>(OUTPUT_COUNT).fill(0))
 	const weights = new Array<number>(SCENE_COUNT).fill(0) // 0..127
 	const out = new Array<number>(OUTPUT_COUNT).fill(0) // derived output (0..127)
+	const locked = new Array<boolean>(OUTPUT_COUNT).fill(false) // press-to-toggle per output
+	const lockedValue = new Array<number>(OUTPUT_COUNT).fill(0) // held value while locked
 	const lastSent = new Array<number>(OUTPUT_COUNT + SCENE_COUNT).fill(-1)
 	const pulseScene = new Array<boolean>(SCENE_COUNT).fill(false)
 	let pulseTimer: NodeJS.Timeout | null = null
@@ -59,6 +62,10 @@ export function MorphPage(): Page {
 		const aPhantom = Math.max(0, 1 - sumA)
 		const denom = aPhantom + sumA // == max(1, sumA); never 0
 		for (let i = 0; i < OUTPUT_COUNT; i++) {
+			if (locked[i]) {
+				out[i] = lockedValue[i] // held against the morph
+				continue
+			}
 			let acc = aPhantom * live[i]
 			for (let k = 0; k < SCENE_COUNT; k++) acc += a[k] * scenes[k][i]
 			out[i] = clamp(Math.round(acc / denom), 0, 127)
@@ -109,7 +116,7 @@ export function MorphPage(): Page {
 		for (let i = 0; i < OUTPUT_COUNT; i++) {
 			f[i as EncId] = {
 				ring: to127(out[i]),
-				rgb: TOP_COLOR,
+				rgb: locked[i] ? LOCK_COLOR : TOP_COLOR,
 				ledBrightness: TOP_BRIGHTNESS,
 				ringBrightness: 31,
 				anim: "none",
@@ -149,6 +156,13 @@ export function MorphPage(): Page {
 				const d = stepFor(ctx, ev.delta)
 				if (!d) return
 				if (ev.id >= 0 && ev.id < OUTPUT_COUNT) {
+					if (locked[ev.id]) {
+						// Locked param: adjust its held value directly; leave the morph
+						// (live scene + weights) untouched.
+						lockedValue[ev.id] = clamp(lockedValue[ev.id] + d, 0, 127)
+						apply(ctx)
+						return
+					}
 					// Grab the current output as the new phantom scene, drop the
 					// weights, then apply the edit — sound stays continuous.
 					for (let i = 0; i < OUTPUT_COUNT; i++) live[i] = out[i]
@@ -163,6 +177,14 @@ export function MorphPage(): Page {
 				return
 			}
 			if (ev.type === "encoder/press") {
+				// Top knobs (0..11): press toggles a value lock (held against the morph).
+				if (ev.id >= 0 && ev.id < OUTPUT_COUNT) {
+					if (!ev.down) return
+					locked[ev.id] = !locked[ev.id]
+					if (locked[ev.id]) lockedValue[ev.id] = out[ev.id]
+					apply(ctx)
+					return
+				}
 				if (ev.id < WEIGHT_OFFSET || ev.id >= WEIGHT_OFFSET + SCENE_COUNT) return
 				const k = ev.id - WEIGHT_OFFSET
 				ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/index/${ev.id}/press`, ev.down ? 1 : 0)
