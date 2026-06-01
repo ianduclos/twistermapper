@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>Twister Manager — Control</title>
+	<style>
+		:root {
+			--bg: #0e0f13; --panel: #171a21; --line: #262b36; --txt: #e6e9ef;
+			--mut: #8a93a6; --acc: #6ea8fe; --ok: #51cf66; --warn: #ffd43b; --bad: #ff6b6b;
+		}
+		* { box-sizing: border-box; }
+		body {
+			margin: 0; background: var(--bg); color: var(--txt);
+			font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif;
+		}
+		header {
+			display: flex; align-items: center; gap: 12px;
+			padding: 12px 18px; border-bottom: 1px solid var(--line);
+		}
+		header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+		#status { margin-left: auto; font-size: 12px; color: var(--mut); display: flex; align-items: center; gap: 6px; }
+		#dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); }
+		#dot.on { background: var(--ok); }
+		main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 18px; max-width: 1000px; }
+		@media (max-width: 720px) { main { grid-template-columns: 1fr; } }
+		.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+		.panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--mut); margin: 0 0 14px; }
+		.row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+		label { color: var(--mut); font-size: 12px; min-width: 64px; }
+		input[type=number], select {
+			background: #0f1117; color: var(--txt); border: 1px solid var(--line);
+			border-radius: 6px; padding: 6px 8px; font: inherit; width: 84px;
+		}
+		input[type=range] { flex: 1; accent-color: var(--acc); }
+		button {
+			background: #232936; color: var(--txt); border: 1px solid var(--line);
+			border-radius: 6px; padding: 8px 12px; font: inherit; cursor: pointer;
+		}
+		button:hover { border-color: var(--acc); }
+		button.primary { background: var(--acc); color: #08111f; border-color: var(--acc); font-weight: 600; }
+		button.playing { background: var(--bad); border-color: var(--bad); color: #1a0808; }
+		.focusgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+		.slot {
+			text-align: center; padding: 10px 6px; border-radius: 8px; cursor: pointer;
+			background: #0f1117; border: 1px solid var(--line);
+		}
+		.slot:hover { border-color: var(--acc); }
+		.slot.focused { border-color: var(--acc); background: #1b2740; }
+		.slot .l { font-size: 17px; font-weight: 700; }
+		.slot .t { font-size: 10px; color: var(--mut); text-transform: uppercase; letter-spacing: .5px; min-height: 12px; }
+		#pulseLed { width: 12px; height: 12px; border-radius: 50%; background: #333; transition: background .04s; }
+		#pulseLed.flash { background: var(--warn); }
+		.values { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; max-width: 360px; }
+		.cell { background: #0f1117; border: 1px solid var(--line); border-radius: 5px; height: 56px; position: relative; overflow: hidden; }
+		.cell .bar { position: absolute; bottom: 0; left: 0; right: 0; background: var(--acc); opacity: .8; }
+		.cell .n { position: absolute; top: 2px; left: 4px; font-size: 9px; color: var(--mut); }
+		#log { font-family: ui-monospace, monospace; font-size: 11px; color: var(--mut); height: 150px; overflow: auto; background: #0b0d12; border: 1px solid var(--line); border-radius: 6px; padding: 8px; white-space: pre-wrap; }
+		.hint { font-size: 11px; color: var(--mut); margin-top: 4px; }
+		.span2 { grid-column: 1 / -1; }
+	</style>
+</head>
+<body>
+	<header>
+		<h1>Twister Manager</h1>
+		<div id="status"><span id="dot"></span><span id="statusText">connecting…</span></div>
+	</header>
+
+	<main>
+		<!-- Pulse generator -->
+		<section class="panel">
+			<h2>Pulse Generator</h2>
+			<div class="row">
+				<button id="playBtn" class="primary">▶ Play</button>
+				<div id="pulseLed"></div>
+				<span id="pulseCount" class="hint">0 pulses</span>
+			</div>
+			<div class="row">
+				<label for="bpm">BPM</label>
+				<input id="bpm" type="number" min="1" max="999" step="1" value="120" />
+				<label for="spb">Steps/beat</label>
+				<select id="spb">
+					<option value="1">1 (quarter)</option>
+					<option value="2">2 (eighth)</option>
+					<option value="4" selected>4 (sixteenth)</option>
+				</select>
+			</div>
+			<div class="row">
+				<label for="clockId">Clock id</label>
+				<select id="clockId">
+					<option value="cycle" selected>cycle 0→3</option>
+					<option value="0">fixed 0</option>
+					<option value="1">fixed 1</option>
+					<option value="2">fixed 2</option>
+					<option value="3">fixed 3</option>
+				</select>
+			</div>
+			<div class="row">
+				<label for="skip">Skip %</label>
+				<input id="skip" type="range" min="0" max="100" value="0" />
+				<span id="skipVal" class="hint">0%</span>
+			</div>
+			<div class="hint">Each pulse sends <code>/twister/in/clock &lt;id&gt;</code>. "Skip %" randomly drops pulses for irregular feel. Browser timing jitters when this tab is in the background.</div>
+		</section>
+
+		<!-- Page focus -->
+		<section class="panel">
+			<h2>Page Focus</h2>
+			<div class="focusgrid" id="focusGrid"></div>
+			<div class="hint">Click a slot to focus it (mirrors the hardware overlay).</div>
+		</section>
+
+		<!-- Live monitor -->
+		<section class="panel span2">
+			<h2>Live Monitor — <span id="monSlot">–</span></h2>
+			<div class="values" id="values"></div>
+			<div class="row" style="margin-top:14px; margin-bottom:0;">
+				<label style="min-width:auto;">Raw</label>
+				<button id="clearLog">clear</button>
+			</div>
+			<div id="log"></div>
+		</section>
+	</main>
+
+	<script>
+	(() => {
+		const SLOTS = ["a","b","c","d","e","f","g","h"]
+		let focused = null
+		const types = {}                 // slot -> page type
+		const values = {}                // slot -> { index -> 0..1 }
+		SLOTS.forEach(s => values[s] = {})
+
+		// ---- WebSocket (served by the daemon on the same host/port) ----
+		let ws = null
+		const dot = document.getElementById("dot")
+		const statusText = document.getElementById("statusText")
+
+		function connect() {
+			ws = new WebSocket(`ws://${location.host}`)
+			ws.onopen = () => { dot.classList.add("on"); statusText.textContent = "connected" }
+			ws.onclose = () => {
+				dot.classList.remove("on"); statusText.textContent = "disconnected — retrying…"
+				setTimeout(connect, 1000)
+			}
+			ws.onmessage = (e) => { try { handleIn(JSON.parse(e.data)) } catch {} }
+		}
+		function send(path, ...args) {
+			if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ path, args }))
+		}
+
+		// ---- Inbound message handling ----
+		const logEl = document.getElementById("log")
+		function log(line) {
+			logEl.textContent = (line + "\n" + logEl.textContent).slice(0, 4000)
+		}
+		function handleIn({ path, args }) {
+			log(`← ${path} ${JSON.stringify(args)}`)
+			if (path === "/twister/out/focus/page") { setFocus(args[0]); return }
+			let m = path.match(/^\/twister\/out\/page\/([a-h])\/type$/)
+			if (m) { types[m[1]] = args[0]; renderFocusGrid(); return }
+			m = path.match(/^\/twister\/out\/page\/([a-h])\/index\/(\d+)\/value$/)
+			if (m) { values[m[1]][+m[2]] = Number(args[0]); if (m[1] === focused) renderValues(); return }
+		}
+
+		// ---- Focus grid ----
+		const focusGrid = document.getElementById("focusGrid")
+		function renderFocusGrid() {
+			focusGrid.innerHTML = ""
+			SLOTS.forEach(s => {
+				const el = document.createElement("div")
+				el.className = "slot" + (s === focused ? " focused" : "")
+				el.innerHTML = `<div class="l">${s.toUpperCase()}</div><div class="t">${types[s] || ""}</div>`
+				el.onclick = () => send("/twister/in/focus/page", s)
+				focusGrid.appendChild(el)
+			})
+		}
+		function setFocus(slot) {
+			if (!SLOTS.includes(slot)) return
+			focused = slot
+			document.getElementById("monSlot").textContent = slot.toUpperCase() + (types[slot] ? ` · ${types[slot]}` : "")
+			renderFocusGrid(); renderValues()
+		}
+
+		// ---- Value monitor ----
+		const valuesEl = document.getElementById("values")
+		function renderValues() {
+			valuesEl.innerHTML = ""
+			const v = values[focused] || {}
+			for (let i = 0; i < 16; i++) {
+				const val = Math.max(0, Math.min(1, v[i] ?? 0))
+				const cell = document.createElement("div")
+				cell.className = "cell"
+				cell.innerHTML = `<div class="bar" style="height:${(val*100).toFixed(0)}%"></div><div class="n">${i}</div>`
+				valuesEl.appendChild(cell)
+			}
+		}
+
+		// ---- Pulse generator ----
+		let playing = false, timer = null, pulseN = 0, cyclePos = 0
+		const playBtn = document.getElementById("playBtn")
+		const led = document.getElementById("pulseLed")
+		const pulseCount = document.getElementById("pulseCount")
+		const bpmEl = document.getElementById("bpm")
+		const spbEl = document.getElementById("spb")
+		const clockIdEl = document.getElementById("clockId")
+		const skipEl = document.getElementById("skip")
+		const skipVal = document.getElementById("skipVal")
+
+		function intervalMs() {
+			const bpm = Math.max(1, Number(bpmEl.value) || 120)
+			const spb = Number(spbEl.value) || 4
+			return 60000 / (bpm * spb)
+		}
+		function tick() {
+			const skip = Number(skipEl.value)
+			if (skip > 0 && Math.random() * 100 < skip) return // dropped pulse
+			let id
+			if (clockIdEl.value === "cycle") { id = cyclePos % 4; cyclePos++ }
+			else id = Number(clockIdEl.value)
+			send("/twister/in/clock", id)
+			pulseN++
+			pulseCount.textContent = `${pulseN} pulses`
+			led.classList.add("flash")
+			setTimeout(() => led.classList.remove("flash"), 40)
+		}
+		function restartTimer() {
+			if (timer) clearInterval(timer)
+			timer = setInterval(tick, intervalMs())
+		}
+		function setPlaying(on) {
+			playing = on
+			playBtn.textContent = on ? "■ Stop" : "▶ Play"
+			playBtn.classList.toggle("playing", on)
+			playBtn.classList.toggle("primary", !on)
+			if (on) { cyclePos = 0; restartTimer() }
+			else if (timer) { clearInterval(timer); timer = null }
+		}
+		playBtn.onclick = () => setPlaying(!playing)
+		bpmEl.oninput = () => { if (playing) restartTimer() }
+		spbEl.oninput = () => { if (playing) restartTimer() }
+		skipEl.oninput = () => { skipVal.textContent = `${skipEl.value}%` }
+		document.getElementById("clearLog").onclick = () => { logEl.textContent = "" }
+
+		// ---- Boot ----
+		renderFocusGrid(); renderValues(); connect()
+	})()
+	</script>
+</body>
+</html>

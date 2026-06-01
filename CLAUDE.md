@@ -9,6 +9,7 @@ Headless Node/TypeScript daemon that sits between a **MIDI Fighter Twister (MFT)
 ## Commands
 
 - `npm run dev` — run the daemon via tsx (`src/cli/index.ts`). Needs the MFT plugged in for real LEDs; OSC in 57121 / out 57120.
+- `npm run dev -- --ui` — also start the optional web UI (default http://localhost:57190; or `TWISTER_UI=1`, port via `--ui-port`/`TWISTER_UI_PORT`). Off by default; daemon is fully headless without it.
 - `npm run build` — `tsc` typecheck + emit to `dist/`. Use `npx tsc --noEmit` for a quick check.
 - `npm test` — vitest (no tests exist yet; see Known gaps).
 - Diagnostic CLIs: `npm run probe` (LED probe), `npm run raw:probe` (raw MIDI), `npm run log` (log input), `npm run osc:send`.
@@ -18,8 +19,9 @@ Port override: `--in`/`--out` flags or `TWISTER_IN`/`TWISTER_OUT` env (substring
 ## Layout
 
 - `src/core/` — `types.ts` (Page/LedFrame/InputEvent contracts), `pageManager.ts` (focus + routing + dirty→render→push).
-- `src/io/` — `midiDriver.ts` (the ONLY place that knows device channels/CC numbers), `inputDecoder.ts` (raw MIDI → InputEvent), `osc.ts` (UDP transport).
-- `src/render/ledReconciler.ts` — per-encoder diff, flush ordering, pulse precedence, rate limiting.
+- `src/io/` — `midiDriver.ts` (the ONLY place that knows device channels/CC numbers), `inputDecoder.ts` (raw MIDI → InputEvent), `osc.ts` (UDP transport), `controlServer.ts` (optional HTTP+WS for the web UI).
+- `src/render/ledReconciler.ts` — per-encoder diff, flush ordering, pulse precedence, rate limiting. `renderLoop.ts` — fixed-rate loop, the single LED output path.
+- `web/index.html` — the optional web UI (no build step): pulse generator, page focus, live monitor. Talks WS `{path,args}` mirroring OSC.
 - `src/pages/` — `basic.ts`, `gestures.ts`, `stepSeq.ts` (page prototypes).
 - `src/boot/bootSplashes.ts` — startup warm-up + deterministic settle paint.
 - `configs/slots.json` — slot→page mapping + per-page config. `configs/settings.json` — main-button interaction timings.
@@ -33,13 +35,16 @@ Port override: `--in`/`--out` flags or `TWISTER_IN`/`TWISTER_OUT` env (substring
 - **Rate caps** (R5): 64 msgs / 5ms burst, 400 msgs/sec rolling, 128 one-time focus paint.
 - **Focus routing** (R6): only the focused page receives input; unfocused pages may keep timers running but their LED frames are not pushed until focused.
 
+## launchd agent (always-on)
+
+A login agent (`com.ianduclos.twistermapper`) runs the compiled daemon at login with KeepAlive. Manage it with `./scripts/agent.sh {install|uninstall|start|stop|status|logs}`; log at `~/Library/Logs/twistermapper.log`.
+
+**Dev gotcha:** the agent holds the MIDI/OSC ports and the single-instance lock, so `npm run dev` will print `Already running … Exiting` while the agent is up. Run `./scripts/agent.sh stop` before dev, `start` after. (Or `TWISTER_ALLOW_MULTI=1` to bypass the guard — but it'll fight the agent for the device.) The agent runs `dist/`, so `npm run build` after changes you want it to pick up.
+
 ## Known gaps / WIP (discuss before "fixing")
 
-- **No tests** despite vitest being wired. The reconciler, input decoder, and stepSeq advance logic are the highest-value targets.
-- **Reconciler self-drain is unimplemented.** Architecture.md describes scheduling a ~5ms self-drain when a burst/rolling cap blocks a flush, but `ledReconciler.ts` just `break`s and leaves work pending until the next `push()`. Under sustained high-rate input (fast clock to StepSeq) this can make LEDs lag or stick. This is the likely root of the "sequencer refresh issues."
-- **`src/render/ledDriver.ts` and `src/util/rateLimit.ts` are empty, unimported dead files.**
-- **`node_modules/` (1665 files) and `dist/` (22 files) are both committed** — there is no `.gitignore`. They dominate the tree and `dist/` drifts from `src/`. Recommended: add `.gitignore`, `git rm -r --cached node_modules dist`, commit. Do this as its own commit so real diffs stay readable.
-- **StepSeq** commit notes "only lacks latch in shift" — there's an in-progress interaction not finished.
+- **StepSeq** commit notes "only lacks latch in shift" — an in-progress interaction not finished.
+- Possible future work: per-track mute/loop controls + playhead viz in the web UI; remote param control; standalone-binary/tray packaging for distribution. See `docs/roadmap.md`.
 
 ## Conventions
 

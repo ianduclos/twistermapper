@@ -17,10 +17,12 @@ Software caps in `ledReconciler.ts`: burst ≤64 msgs/5ms, rolling <400 msgs/sec
 - LED output only is frame-gated; OSC *out* stays realtime inside page handlers.
 - Files: new `src/render/renderLoop.ts`; edits to `src/cli/index.ts`. Tests: loop cadence (fake timers) + existing reconciler diff tests.
 
-## Phase 2 — Pulse generator + web UI (merged)
-The old "core transport" idea is dropped — the pulse generator lives in the **UI** so pulses can be regular, skipped, or irregular, with per-pulse clock-id (0–3) selection driving StepSeq per-track `clockIds`.
+## Phase 2 — Pulse generator + web UI (merged) — DONE (2026-06-01)
+The old "core transport" idea is dropped — the pulse generator lives in the **UI** so pulses can be regular, skipped, or irregular, with per-pulse clock-id (0–3) selection driving StepSeq per-track `clockIds`. Shipped: shared `routeControl`, `src/io/controlServer.ts` (HTTP+WS, `--ui`/`TWISTER_UI=1`, port 57190), `web/index.html` (pulse gen + A–H focus + live monitor), `/twister/out/focus/page` emit, onConnect state snapshot. `ws` dependency added. End-to-end verified (HTTP 200, snapshot, focus echo, clock→StepSeq value round-trip). 22/22 tests green.
+
+Original Phase 2 design notes (for reference):
 - Refactor `cli/index.ts` OSC `onMessage` body into a shared `routeControl(path, args)` so OSC and the web UI dispatch identically (also unlocks external OSC apps for free).
-- Add optional HTTP + WebSocket server (`src/io/controlServer.ts`), off by default (`--ui` / `TWISTER_UI=1`, port 7878). One dep: `ws`.
+- Add optional HTTP + WebSocket server (`src/io/controlServer.ts`), off by default (`--ui` / `TWISTER_UI=1`, port 57190). One dep: `ws`.
 - WS protocol = JSON `{path, args}` mirroring OSC. Browser→daemon → `routeControl`; daemon→browser forwards selected `/twister/out/...` for live monitoring.
 - `web/index.html` (no build step): **pulse generator** (BPM, play/stop, skip/irregular, clock-id select), **A–H focus buttons**, **live monitor** (page type + values + pulse state).
 - Timing note: browser `setInterval` jitters / throttles when backgrounded. Fine for irregular/experimental use; if tight timing is needed later, move the *scheduler* server-side while keeping the *pattern* defined in the UI.

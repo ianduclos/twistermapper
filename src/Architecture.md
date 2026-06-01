@@ -58,6 +58,7 @@ Out (core + page-specific):
 • /twister/out/page/<slot>/index/<id>/press <1|0> → encoder button state for pages that surface presses.
 • /twister/out/page/<slot>/config/color/map <16 ints> → BasicPage palette dump (response to `/twister/in/dump/global`).
 • /twister/out/page/<slot>/index/all/value <16 floats> → BasicPage normalized value dump.
+• /twister/out/focus/page <slotLetter> → emitted when focus changes (OSC + web UI), so external surfaces can track the focused slot.
 • Example (BasicPage): /twister/out/page/a/index/1/value 0.77380 (≤ 5 decimals).
 
 In (core):
@@ -75,6 +76,15 @@ In (page):
 OSC numeric rules:
 • Floats emitted with max 5 decimals.
 • Normalization is value / 127 on output; input normalized back to 0..127 (rounded).
+
+⸻
+
+Control surface (OSC + optional web UI)
+• All inbound control (OSC and web UI) is dispatched through one shared router (routeControl in src/cli/index.ts), so both speak the same /twister/in/... vocabulary.
+• All outbound twister messages go through emitOut(): out to OSC/UDP AND mirrored to any connected web UI.
+• Web UI is OFF by default; enable with --ui or TWISTER_UI=1 (port via --ui-port / TWISTER_UI_PORT, default 57190). The daemon is fully headless without it.
+• Transport: there is NO internal clock. The pulse generator lives in the web UI (BPM, play/stop, skip %, per-pulse clock id 0–3), sending /twister/in/clock <id>. Browser timer jitter is acceptable for irregular/experimental use; move server-side only if tight timing is needed.
+• src/io/controlServer.ts: tiny HTTP (serves web/index.html) + WebSocket. WS protocol mirrors OSC as JSON { path, args }. On connect it pushes a state snapshot (current focus + each slot's page type) so a late-joining UI is correct immediately.
 
 ⸻
 

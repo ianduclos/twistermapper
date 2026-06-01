@@ -1,7 +1,9 @@
 // src/cli/index.ts
 import { readFileSync } from "node:fs"
-import { resolve as resolvePath } from "node:path"
+import { resolve as resolvePath, join as joinPath } from "node:path"
+import { tmpdir } from "node:os"
 import midiLib from "@julusian/midi"
+import { tryAcquireLock, releaseLock } from "../util/singleInstance.js"
 import { NodeMidiDriver } from "../io/midiDriver.js" // real driver from Codex task
 import { LedReconciler } from "../render/ledReconciler.js"
 import { createRenderLoop } from "../render/renderLoop.js"
@@ -11,6 +13,7 @@ import { GesturePage } from "../pages/gestures.js"
 import { StepSeqPage } from "../pages/stepSeq.js"
 import { createInputDecoder } from "../io/inputDecoder.js"
 import { createOsc } from "../io/osc.js"
+import { createControlServer, type ControlServer } from "../io/controlServer.js"
 import { runRandomSplash, settleFocused } from "../boot/bootSplashes.js"
 import type {
 	Page,
@@ -29,6 +32,25 @@ import type { BasicPageConfig } from "../pages/basic.js"
 import type { StepSeqConfig } from "../pages/stepSeq.js"
 import { clamp } from "../util/scale.js"
 
+// ---- Single-instance guard (before opening any MIDI/OSC ports) ----
+// A duplicate launch (e.g. a Max loadbang firing every patch open) detects the
+// live instance and exits cleanly. Bypass with TWISTER_ALLOW_MULTI=1.
+if (process.env.TWISTER_ALLOW_MULTI !== "1") {
+	const lockPath = joinPath(tmpdir(), "twister-manager.lock")
+	const lock = tryAcquireLock(lockPath)
+	if (!lock.acquired) {
+		console.error(
+			`[SingleInstance] Already running (pid ${lock.holderPid}). Exiting.`
+		)
+		process.exit(0)
+	}
+	const cleanup = () => releaseLock(lockPath)
+	process.on("exit", cleanup)
+	// Ensure 'exit' (and cleanup) runs on Ctrl-C / kill.
+	process.on("SIGINT", () => process.exit(0))
+	process.on("SIGTERM", () => process.exit(0))
+}
+
 // ---- Port selection via CLI/env (optional but handy) ----
 const arg = (name: string) => {
 	const i = process.argv.indexOf(name)
@@ -36,6 +58,11 @@ const arg = (name: string) => {
 }
 const inSel = arg("--in") ?? process.env.TWISTER_IN ?? "twister"
 const outSel = arg("--out") ?? process.env.TWISTER_OUT ?? "twister"
+
+// Optional web UI (off by default). Enable with --ui or TWISTER_UI=1.
+const uiEnabled =
+	process.argv.includes("--ui") || process.env.TWISTER_UI === "1"
+const uiPort = Number(arg("--ui-port") ?? process.env.TWISTER_UI_PORT ?? 57190)
 
 // ---- MIDI in/out + reconciler ----
 let midiIo = new NodeMidiDriver()
@@ -47,6 +74,16 @@ let rec = new LedReconciler(midiIo)
 // Render-loop output state: renderTick() pushes the current desired frame each
 // frame; this flag asks the next frame to be a fast focus paint (128-msg burst).
 let needsFocusPaint = false
+
+// Optional web UI control server (null when --ui is off).
+let controlServer: ControlServer | null = null
+
+// All outbound twister messages go through here: out to OSC/UDP, and mirrored
+// to any connected web UI so it can monitor live.
+function emitOut(path: string, ...args: Array<number | string | boolean>) {
+	osc.send(path, ...args)
+	controlServer?.broadcast(path, args)
+}
 
 // --- OSC transport (defaults: in 57121, out 57120) ---
 const osc = createOsc()
@@ -66,7 +103,7 @@ const modifiers = {
 const baseCtx: Omit<PageContext, "setDirty" | "slot" | "slotLabel"> = {
     modifiers,
     resolution,
-    osc: { send: (path, ...args) => osc.send(path, ...args) },
+    osc: { send: (path, ...args) => emitOut(path, ...args) },
 }
 
 // Track focused slot locally so overlay can highlight it
@@ -115,6 +152,7 @@ const SLOT_COLOR: Record<Slot, number> = {
 
 const SLOTS_CONFIG_PATH = resolvePath(process.cwd(), "configs/slots.json")
 const SETTINGS_CONFIG_PATH = resolvePath(process.cwd(), "configs/settings.json")
+const UI_INDEX_PATH = resolvePath(process.cwd(), "web/index.html")
 const DEFAULT_PAGE_NAME = "Basic"
 const DEFAULT_ENCODER_COLOR = 110
 const DEFAULT_BRIGHTNESS = 5
@@ -640,6 +678,7 @@ dec.onEvent((ev) => {
 			const s = ev.id as Slot
 			focusedSlot = s
 			pm.focus(s)
+			emitOut("/twister/out/focus/page", slotLabel(s))
 			// repaint overlay to update highlight; pageManager's repaint is suppressed by the guard
 			paintOverlay()
 		}
@@ -659,14 +698,16 @@ console.log(
 	'Daemon up. Using port "Midi Fighter Twister". Twist & press to test.'
 )
 
-// OSC input → core routes
-osc.onMessage((path, args) => {
+// Shared control router: both OSC input and the web UI dispatch through this,
+// so they speak one vocabulary (the /twister/in/... paths).
+function routeControl(path: string, args: any[]) {
 	// /twister/in/focus/page <a..h>
 	if (path === "/twister/in/focus/page") {
 		const slot = parseSlotLabel(args[0])
 		if (slot !== undefined) {
 			focusedSlot = slot
 			pm.focus(slot)
+			emitOut("/twister/out/focus/page", slotLabel(slot))
 			if (overlayState.active) paintOverlay()
 		}
 		return
@@ -695,7 +736,26 @@ osc.onMessage((path, args) => {
 		}
 		return
 	}
-})
+}
+
+// OSC input → shared router
+osc.onMessage((path, args) => routeControl(path, args))
+
+// Optional web UI: same router for inbound, mirrored OSC-out for monitoring.
+if (uiEnabled) {
+	controlServer = createControlServer({
+		port: uiPort,
+		staticFile: UI_INDEX_PATH,
+		onMessage: routeControl,
+		onConnect: (send) => {
+			// Snapshot so a late-joining UI reflects current state immediately.
+			send("/twister/out/focus/page", [slotLabel(focusedSlot)])
+			for (const slot of SLOT_INDICES) {
+				send(`/twister/out/page/${slotLabel(slot)}/type`, [slotPageNames[slot]])
+			}
+		},
+	})
+}
 
 console.log("Daemon up: MIDI+OSC live. In: 57121  Out: 57120")
 console.log(

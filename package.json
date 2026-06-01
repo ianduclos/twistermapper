@@ -1,5 +1,5 @@
 {
-	"name": "twister-manager-2",
+	"name": "twistermapper",
 	"version": "1.0.0",
 	"main": "index.js",
 	"scripts": {
@@ -18,12 +18,14 @@
 	"description": "",
 	"devDependencies": {
 		"@types/node": "^24.6.2",
+		"@types/ws": "^8.18.1",
 		"tsx": "^4.20.6",
 		"typescript": "^5.9.3",
 		"vitest": "^3.2.4"
 	},
 	"dependencies": {
 		"@julusian/midi": "^3.6.1",
-		"osc": "^2.4.5"
+		"osc": "^2.4.5",
+		"ws": "^8.21.0"
 	}
 }

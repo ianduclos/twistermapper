@@ -1,4 +1,4 @@
-# Twister Manager 2
+# twistermapper
 
 Headless Node.js/TypeScript daemon that drives a MIDI Fighter Twister (MFT), renders LEDs, and proxies MIDI↔OSC for multiple “pages” of controls. The process boots with a splash animation, then repaints the focused page twice to settle device brightness.
 
@@ -51,5 +51,27 @@ Headless Node.js/TypeScript daemon that drives a MIDI Fighter Twister (MFT), ren
 - Install dependencies: `npm install`
 - Type-check: `npm run build`
 - Run daemon (w/ tsx): `npm run dev`
+- Run with the optional web UI: `npm run dev -- --ui` (default http://localhost:57190; or set `TWISTER_UI=1`). The UI hosts a pulse generator (sends `/twister/in/clock`), page-focus buttons, and a live monitor. The daemon is fully headless without it.
+
+## Running as an always-on service (macOS launchd)
+
+For "it's just always there" — no Terminal, no manual start — install the launchd agent:
+
+```
+./scripts/agent.sh install     # load at login, KeepAlive, web UI on :57190
+./scripts/agent.sh stop|start  # toggle (stop before `npm run dev` for hacking)
+./scripts/agent.sh uninstall   # remove
+./scripts/agent.sh logs        # tail ~/Library/Logs/twistermapper.log
+```
+
+The daemon is single-instance (a pidfile lock), so a duplicate launch exits cleanly instead of fighting for the MIDI/OSC ports.
+
+### Max integration
+
+Because the agent is always running, a Max patch doesn't launch anything — it just talks OSC:
+
+- On `loadbang`, send to the daemon's OSC-in (UDP **57121**): e.g. `/twister/in/focus/page a`, or `/twister/in/clock <id>` to drive a sequencer.
+- Watch the daemon's OSC-out (UDP **57120**) for `/twister/out/hello` (emitted on startup) to light a "ready" indicator, and `/twister/out/focus/page <a..h>` to track focus.
+- This keeps the patch trivial and cross-platform; the "engine" is the background service.
 
 The project targets NodeNext ESM and keeps MIDI channel mappings, rate limits, and page logic centralized in `src/Architecture.md`.
