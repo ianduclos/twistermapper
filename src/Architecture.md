@@ -139,13 +139,12 @@ StepSeqPage (clocked 4-track sequencer)
 ⸻
 
 MorphPage (4-corner vector morph)
-• Top 12 encoders (0–11) are the morph OUTPUT (12 values); bottom 4 (12–15) are scene weights. Four stored "scenes" (12 values each) blend by normalized weighted average — `out[i] = Σ(aₖ·Sₖ[i]) / Σaₖ` with `aₖ = weight/127` — matching Max `pattrstorage` interpolation, so the weights map straight onto a pattr recall.
-• Phantom "live scene": the currently dialed output P is an implicit anchor with weight `aₚ = max(0, 1 − Σaₖ)`. At rest output = P (no jump on first touch); turning a weight up dissolves the phantom smoothly, and once Σaₖ ≥ 1 you're in the pure 4-scene field.
-• Turning a top encoder grabs the current output as the new P, zeros the weights, and applies the edit (sound stays continuous). Turning a bottom encoder adjusts that weight.
-• Press a top encoder to toggle a **value lock**: a locked output is held at its current value, unaffected by morphing; locked encoders render reddish-orange. Turning a locked encoder adjusts its held value directly (morph/weights untouched).
-• Press a bottom encoder = hard recall (weight=max, others 0 → that scene). Shift+press = save current output into that scene (the encoder pulses to confirm). Bottom presses broadcast `/twister/out/page/<slot>/index/<id>/press <1|0>`.
-• LEDs: top rings = output value (uniform color); bottom rings = weight, one color per scene, dominant scene brightest.
-• OSC out: `/twister/out/page/<slot>/index/<0–11>/value` (outputs) and `/index/<12–15>/value` (weights). Persistence is Max's job (no serialize): on `/dump` it emits `/twister/out/page/<slot>/scene/<k>/values <12 floats>` for k=0–3; `/twister/in/page/<slot>/scene/<k>/set <12 floats>` restores a scene.
+• Top 12 encoders (0–11) are the OUTPUT (12 values); bottom 4 (12–15) are scene faders. There are 4 saved scenes plus a live "phantom" snapshot P. The phantom is not a peer scene — `out[i] = wp·P[i] + (1−wp)·(Σ wₖ·Sₖ[i] / Σwₖ)` where `wp = max(0, 1 − travel/PHANTOM_DECAY)`.
+• Moving a value knob snapshots the current output into P and resets `travel` (phantom → 100%), then edits P — so value knobs are always 1:1 free, and the faders keep their positions (never reset). Moving any fader (up or down) adds to `travel`, dissolving the phantom toward the scene blend; once dissolved, one fader at max = that scene pure. Faders are absolute 0..127 and blend together; pushing a maxed fader further reduces the other faders. `PHANTOM_DECAY` (default 127 ≈ one fader sweep) tunes how fast the phantom dissolves.
+• Press a top encoder to toggle a value LOCK (reddish-orange): a locked param leaves the blend and becomes a free direct control (out = its live value, immune to the morph).
+• Press a bottom encoder = recall: loads that scene into the (unlocked) phantom and clears the faders → the pure scene. Shift+press = save current output into that scene (the encoder pulses to confirm). Bottom presses broadcast `/twister/out/page/<slot>/index/<id>/press <1|0>`.
+• LEDs: top rings = output value (blue, or reddish-orange when locked); bottom rings = each fader weight, one color per scene, dominant fader brightest.
+• OSC out: `/twister/out/page/<slot>/index/<0–11>/value` (outputs) and `/index/<12–15>/value` (fader weights). Persistence is Max's job (no serialize): on `/dump` it emits `/twister/out/page/<slot>/scene/<k>/values <12 floats>` for k=0–3; `/twister/in/page/<slot>/scene/<k>/set <12 floats>` restores a scene.
 
 ⸻
 

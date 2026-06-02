@@ -1,19 +1,22 @@
-/* MorphPage — 4-corner vector morph (Prophet-VS / pattr-style interpolation).
+/* MorphPage — scene morph with a dissolving "phantom" snapshot.
  *
- * Layout: top 12 encoders (0–11) are the morph OUTPUT; bottom 4 (12–15) are
- * scene weights. Four stored "scenes" (12 values each) are blended by the four
- * weights as a normalized weighted average — the same math Max `pattrstorage`
- * uses, so the weights map straight onto a pattr recall.
+ * Layout: top 12 encoders (0–11) are the OUTPUT (12 values); bottom 4 (12–15) are
+ * scene faders. There are 4 saved scenes plus a live "phantom" scene P.
  *
- * Phantom "live scene": the currently dialed output P is an implicit anchor with
- * weight aₚ = max(0, 1 − Σaₖ). At rest (all weights 0) output = P, so there is no
- * jump on first touch; as you turn a weight up the phantom dissolves smoothly and
- * once Σaₖ ≥ 1 you're in the pure 4-scene field. Pressing a weight is the one
- * intentional jump (hard recall).
+ * The phantom is NOT a peer of the scenes — it's a fresh snapshot of what you're
+ * currently seeing, taken whenever you move a value knob, with weight 100%. So:
+ *   - Move a value knob → P = snapshot(current output), phantom weight → 100%,
+ *     then edit it. Output = P (your edit, 1:1 free). Faders keep their positions.
+ *   - Move any fader (up OR down) → the phantom weight decays toward 0, crossfading
+ *     the output from the snapshot into the scene blend.
+ *   - Faders are absolute 0..127 and blend together (multiple at once); pushing a
+ *     maxed fader further reduces the other faders.
+ *     out[i] = wp·P[i] + (1−wp)·(Σ wₖ·Sₖ[i] / Σwₖ),  wp = max(0, 1 − travel/DECAY)
  *
- * Persistence is Max's job (no serialize()): respond to /dump with each scene's
- * values; accept /scene/<k>/set <12 floats> to restore. Soft-state (P, weights)
- * is transient.
+ * Press a top knob to toggle a value LOCK (reddish-orange): a locked param is a
+ * free direct control (out = its live value, immune to the morph). Press a fader
+ * to recall its scene; shift+press to save. Persistence is Max's (no serialize):
+ * /dump emits each scene's values; /scene/<k>/set <12 floats> restores one.
  */
 
 import { Page, LedFrame, EncId, PageContext } from "../core/types.js"
@@ -21,10 +24,14 @@ import { clamp, toFixedN, to127 } from "../util/scale.js"
 
 const OUTPUT_COUNT = 12
 const SCENE_COUNT = 4
-const WEIGHT_OFFSET = 12 // encoders 12..15 are the scene weights
+const FADER_OFFSET = 12 // encoders 12..15 are the scene faders
+
+// Fader travel (sum of |deltas| since the last value-knob move) needed to fully
+// dissolve the phantom. ~one full fader sweep. Tunable.
+const PHANTOM_DECAY = 127
 
 const TOP_COLOR = 1 // blue — outputs
-const LOCK_COLOR = 77 // reddish orange — locked (held against morph) outputs
+const LOCK_COLOR = 77 // reddish orange — locked (free/direct) outputs
 const SCENE_COLORS = [80, 60, 66, 110] as const // red, green, yellow, purple
 const TOP_BRIGHTNESS = 6
 const SCENE_BRIGHTNESS_IDLE = 10
@@ -32,14 +39,14 @@ const SCENE_BRIGHTNESS_DOMINANT = 29
 const SAVE_PULSE_MS = 90
 
 export function MorphPage(): Page {
-	const live = new Array<number>(OUTPUT_COUNT).fill(0) // phantom scene P (0..127)
+	const live = new Array<number>(OUTPUT_COUNT).fill(0) // phantom snapshot P
 	const scenes = Array.from({ length: SCENE_COUNT }, () => new Array<number>(OUTPUT_COUNT).fill(0))
-	const weights = new Array<number>(SCENE_COUNT).fill(0) // 0..127
+	const weights = new Array<number>(SCENE_COUNT).fill(0) // absolute fader weights 0..127
 	const out = new Array<number>(OUTPUT_COUNT).fill(0) // derived output (0..127)
-	const locked = new Array<boolean>(OUTPUT_COUNT).fill(false) // press-to-toggle per output
-	const lockedValue = new Array<number>(OUTPUT_COUNT).fill(0) // held value while locked
+	const locked = new Array<boolean>(OUTPUT_COUNT).fill(false) // press-to-toggle; out = live (free)
 	const lastSent = new Array<number>(OUTPUT_COUNT + SCENE_COUNT).fill(-1)
 	const pulseScene = new Array<boolean>(SCENE_COUNT).fill(false)
+	let travel = 0 // fader activity since last value move → phantom weight wp = 1 − travel/DECAY
 	let pulseTimer: NodeJS.Timeout | null = null
 	let dirty = true
 	let ctxRef: PageContext | null = null
@@ -51,28 +58,25 @@ export function MorphPage(): Page {
 	const stepFor = (ctx: PageContext, delta: number) =>
 		Math.round(delta * (128 / ctx.resolution))
 
-	// Recompute the 12 outputs from phantom + weighted scenes (normalized).
+	// Crossfade the snapshot (phantom) into the scene blend by wp; locked params
+	// bypass the blend entirely (free direct control).
 	const recompute = () => {
-		let sumA = 0
-		const a = weights.map((w) => {
-			const x = w / 127
-			sumA += x
-			return x
-		})
-		const aPhantom = Math.max(0, 1 - sumA)
-		const denom = aPhantom + sumA // == max(1, sumA); never 0
+		const wp = Math.max(0, 1 - travel / PHANTOM_DECAY)
+		let sumW = 0
+		for (const w of weights) sumW += w
 		for (let i = 0; i < OUTPUT_COUNT; i++) {
-			if (locked[i]) {
-				out[i] = lockedValue[i] // held against the morph
+			if (locked[i] || sumW === 0) {
+				out[i] = live[i] // free direct, or phantom-only when no fader is up
 				continue
 			}
-			let acc = aPhantom * live[i]
-			for (let k = 0; k < SCENE_COUNT; k++) acc += a[k] * scenes[k][i]
-			out[i] = clamp(Math.round(acc / denom), 0, 127)
+			let s = 0
+			for (let k = 0; k < SCENE_COUNT; k++) s += weights[k] * scenes[k][i]
+			const sceneBlend = s / sumW
+			out[i] = clamp(Math.round(wp * live[i] + (1 - wp) * sceneBlend), 0, 127)
 		}
 	}
 
-	// Emit changed outputs (index 0..11) and weights (index 12..15) as normalized.
+	// Emit changed outputs (index 0..11) and fader weights (index 12..15).
 	const emit = (ctx: PageContext) => {
 		for (let i = 0; i < OUTPUT_COUNT; i++) {
 			const v = toFixedN(out[i] / 127, 5)
@@ -82,7 +86,7 @@ export function MorphPage(): Page {
 			}
 		}
 		for (let k = 0; k < SCENE_COUNT; k++) {
-			const idx = WEIGHT_OFFSET + k
+			const idx = FADER_OFFSET + k
 			const v = toFixedN(weights[k] / 127, 5)
 			if (lastSent[idx] !== v) {
 				lastSent[idx] = v
@@ -111,6 +115,26 @@ export function MorphPage(): Page {
 		}, SAVE_PULSE_MS)
 	}
 
+	// Turn a fader: absolute 0..127; pushing a maxed fader further reduces the
+	// others; any movement adds to travel (dissolves the phantom).
+	const turnFader = (k: number, d: number) => {
+		travel += Math.abs(d)
+		if (d > 0) {
+			const room = 127 - weights[k]
+			if (d <= room) {
+				weights[k] += d
+			} else {
+				weights[k] = 127
+				const overflow = d - room
+				for (let j = 0; j < SCENE_COUNT; j++) {
+					if (j !== k) weights[j] = clamp(weights[j] - overflow, 0, 127)
+				}
+			}
+		} else {
+			weights[k] = clamp(weights[k] + d, 0, 127)
+		}
+	}
+
 	const frame = (): LedFrame => {
 		const f = {} as LedFrame
 		for (let i = 0; i < OUTPUT_COUNT; i++) {
@@ -125,7 +149,7 @@ export function MorphPage(): Page {
 		let maxW = 0
 		for (const w of weights) if (w > maxW) maxW = w
 		for (let k = 0; k < SCENE_COUNT; k++) {
-			const enc = (WEIGHT_OFFSET + k) as EncId
+			const enc = (FADER_OFFSET + k) as EncId
 			const dominant = weights[k] > 0 && weights[k] >= maxW
 			f[enc] = {
 				ring: to127(weights[k]),
@@ -156,48 +180,40 @@ export function MorphPage(): Page {
 				const d = stepFor(ctx, ev.delta)
 				if (!d) return
 				if (ev.id >= 0 && ev.id < OUTPUT_COUNT) {
-					if (locked[ev.id]) {
-						// Locked param: adjust its held value directly; leave the morph
-						// (live scene + weights) untouched.
-						lockedValue[ev.id] = clamp(lockedValue[ev.id] + d, 0, 127)
-						apply(ctx)
-						return
-					}
-					// Grab the current output as the new phantom scene, drop the
-					// weights, then apply the edit — sound stays continuous.
+					// Value knob: snapshot what we're seeing into the phantom at 100%,
+					// then edit it. Output follows 1:1; faders keep their positions.
 					for (let i = 0; i < OUTPUT_COUNT; i++) live[i] = out[i]
-					weights.fill(0)
+					travel = 0
 					live[ev.id] = clamp(live[ev.id] + d, 0, 127)
 					apply(ctx)
-				} else if (ev.id >= WEIGHT_OFFSET && ev.id < WEIGHT_OFFSET + SCENE_COUNT) {
-					const k = ev.id - WEIGHT_OFFSET
-					weights[k] = clamp(weights[k] + d, 0, 127)
+				} else if (ev.id >= FADER_OFFSET && ev.id < FADER_OFFSET + SCENE_COUNT) {
+					turnFader(ev.id - FADER_OFFSET, d)
 					apply(ctx)
 				}
 				return
 			}
 			if (ev.type === "encoder/press") {
-				// Top knobs (0..11): press toggles a value lock (held against the morph).
+				// Top knobs (0..11): press toggles a value lock → free direct control.
 				if (ev.id >= 0 && ev.id < OUTPUT_COUNT) {
 					if (!ev.down) return
 					locked[ev.id] = !locked[ev.id]
-					if (locked[ev.id]) lockedValue[ev.id] = out[ev.id]
 					apply(ctx)
 					return
 				}
-				if (ev.id < WEIGHT_OFFSET || ev.id >= WEIGHT_OFFSET + SCENE_COUNT) return
-				const k = ev.id - WEIGHT_OFFSET
+				if (ev.id < FADER_OFFSET || ev.id >= FADER_OFFSET + SCENE_COUNT) return
+				const k = ev.id - FADER_OFFSET
 				ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/index/${ev.id}/press`, ev.down ? 1 : 0)
 				if (!ev.down) return
 				const shift = ctx.modifiers.shiftLeft || ctx.modifiers.shiftRight
 				if (shift) {
-					// Save: snapshot the current output into scene k (does not move sound).
+					// Save: snapshot the current output into scene k.
 					for (let i = 0; i < OUTPUT_COUNT; i++) scenes[k][i] = out[i]
 					triggerSavePulse(k, ctx)
 				} else {
-					// Recall: hard jump to scene k.
+					// Recall: pure scene k (phantom fully dissolved, only fader k up).
 					weights.fill(0)
 					weights[k] = 127
+					travel = PHANTOM_DECAY
 					apply(ctx)
 				}
 				return
