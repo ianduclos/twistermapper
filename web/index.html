@@ -155,6 +155,13 @@
 			<div class="hint">Layout dropdowns reassign a slot's page live. "Save as" snapshots the whole interface; Load applies a saved preset (persists across restart).</div>
 		</section>
 
+		<!-- Basic page modes -->
+		<section class="panel span2">
+			<h2>Basic Page Modes</h2>
+			<div id="modeGrid"></div>
+			<div class="hint">note = press sends note + brightness; precision = hold a knob to fine-tune (no note out); recall = press recalls a knob, L+R shift saves the scene, L shift recalls all.</div>
+		</section>
+
 		<!-- Global settings -->
 		<section class="panel span2">
 			<h2>Global Settings</h2>
@@ -181,8 +188,10 @@
 	(() => {
 		const SLOTS = ["a","b","c","d","e","f","g","h"]
 		const PAGE_OPTIONS = ["Basic","Gesture","StepSeq"]
+		const MODE_OPTIONS = ["note","precision","recall"]
 		let focused = null
 		const types = {}                 // slot -> page type
+		const modes = {}                 // slot -> Basic mode
 		const values = {}                // slot -> { index -> 0..1 }
 		SLOTS.forEach(s => values[s] = {})
 		let presets = []                 // saved preset names
@@ -219,7 +228,9 @@
 			if (path === "/twister/out/preset/active") { activePreset = args[0] || ""; renderPresets(); return }
 			if (path === "/twister/out/settings") { try { settings = JSON.parse(args[0]) } catch {} ; renderSettings(); return }
 			let m = path.match(/^\/twister\/out\/page\/([a-h])\/type$/)
-			if (m) { types[m[1]] = args[0]; renderFocusGrid(); renderLayout(); return }
+			if (m) { types[m[1]] = args[0]; renderFocusGrid(); renderLayout(); renderModes(); return }
+			m = path.match(/^\/twister\/out\/page\/([a-h])\/mode$/)
+			if (m) { modes[m[1]] = args[0]; renderModes(); return }
 			m = path.match(/^\/twister\/out\/page\/([a-h])\/index\/(\d+)\/value$/)
 			if (m) { values[m[1]][+m[2]] = Number(args[0]); if (m[1] === focused) renderValues(); return }
 		}
@@ -276,6 +287,30 @@
 				sel.onchange = () => send(`/twister/in/slot/${s}/page`, sel.value)
 				cell.appendChild(lab); cell.appendChild(sel)
 				layoutGrid.appendChild(cell)
+			})
+		}
+
+		// ---- Basic page modes ----
+		const modeGrid = document.getElementById("modeGrid")
+		function renderModes() {
+			modeGrid.innerHTML = ""
+			const basic = SLOTS.filter(s => types[s] === "Basic")
+			if (!basic.length) { modeGrid.innerHTML = '<div class="hint">No Basic pages in the current layout.</div>'; return }
+			basic.forEach(s => {
+				const row = document.createElement("div")
+				row.className = "row"
+				const lab = document.createElement("label")
+				lab.style.minWidth = "auto"; lab.textContent = "Slot " + s.toUpperCase()
+				const sel = document.createElement("select")
+				MODE_OPTIONS.forEach(mo => {
+					const o = document.createElement("option")
+					o.value = mo; o.textContent = mo
+					if ((modes[s] || "note") === mo) o.selected = true
+					sel.appendChild(o)
+				})
+				sel.onchange = () => send(`/twister/in/page/${s}/mode`, sel.value)
+				row.appendChild(lab); row.appendChild(sel)
+				modeGrid.appendChild(row)
 			})
 		}
 
@@ -385,7 +420,7 @@
 		})
 
 		// ---- Boot ----
-		renderFocusGrid(); renderValues(); renderLayout(); renderPresets(); connect()
+		renderFocusGrid(); renderValues(); renderLayout(); renderModes(); renderPresets(); connect()
 	})()
 	</script>
 </body>

@@ -59,6 +59,7 @@ Out (core + page-specific):
 • /twister/out/page/<slot>/config/color/map <16 ints> → BasicPage palette dump (response to `/twister/in/dump/global`).
 • /twister/out/page/<slot>/index/all/value <16 floats> → BasicPage normalized value dump.
 • /twister/out/focus/page <slotLetter> → emitted when focus changes (OSC + web UI), so external surfaces can track the focused slot.
+• /twister/out/page/<slot>/mode <note|precision|recall> → BasicPage current mode (on init/focus/change).
 • /twister/out/preset/list <names…> → saved preset names (on connect, and after save/load/delete).
 • /twister/out/preset/active <name|""> → name of the active preset, "" when custom/unsaved.
 • /twister/out/settings <json> → current global settings (interaction timings + render.fps) as a JSON string.
@@ -86,6 +87,7 @@ In (page):
 • /twister/in/page/<slot>/config/colorbrightness/map <16 ints> → replace BasicPage encoder brightness map.
 • /twister/in/page/<slot>/config/colorbrightness/enc/<id>/set <int> → update a single BasicPage encoder brightness.
 • /twister/in/page/<slot>/scene/<k>/set <12 floats> → restore MorphPage scene k (k 0–3); ignored if the slot isn't MorphPage.
+• /twister/in/page/<slot>/mode <note|precision|recall> → set BasicPage mode (ignored by other pages); page echoes /twister/out/page/<slot>/mode.
 
 OSC numeric rules:
 • Floats emitted with max 5 decimals.
@@ -114,13 +116,14 @@ Page model
 • Background behavior: pages may keep timers running while unfocused (e.g., GesturePage playback); unfocused pages update desired frames but those frames are not sent until focused.
 
 BasicPage (reference)
-• 16 values 0..127.
-• Turn: vals[id] += deltaStep → clamp 0..127.
-• LED ring mirrors value (scaled 0..127).
+• 16 values as **float 0..1** (the real value/OSC resolution); the 0..127 LED ring is display only (`ring = round(val·127)`). Turn: `val += delta·normalStep`, `normalStep = (128/resolution)/127` → clamp 0..1.
 • Defaults: purple (110), ledBrightness = 5 (device 23), ringBrightness = 31.
-• Press (hold): temporarily set ledBrightness = 29 (max); release restores.
-• OSC out on change: /twister/out/page/<slot>/index/<id>/value <val/127> (≤ 5 dp) and /twister/out/page/<slot>/index/<id>/press <1|0> when encoder buttons change.
-• OSC in (optional): /twister/in/page/<slot>/index/<id>/set <norm>.
+• **Modes** (per page, runtime, default `note`; reassign the encoder press):
+  - `note` — press = note on/off: brightness bump + `/twister/out/page/<slot>/index/<id>/press <1|0>`.
+  - `precision` — hold a knob → its turns are fine (`normalStep / PRECISION_DIVISOR`, default 8); brightness bump as feedback; no `/press`.
+  - `recall` — one saved scene/page: knob press recalls that knob's value; L+R shift together saves the scene (knobs flash); L shift alone (on release, if R wasn't pressed) recalls the whole scene; no `/press`. R shift alone reserved for future multi-scene.
+• OSC out on change: /twister/out/page/<slot>/index/<id>/value <0..1> (≤ 5 dp), /twister/out/page/<slot>/index/<id>/press <1|0> (note mode only), and /twister/out/page/<slot>/mode <note|precision|recall> (on init/focus/change).
+• OSC in: /twister/in/page/<slot>/index/<id>/set <0..1>; /twister/in/page/<slot>/mode <note|precision|recall>.
 
 GesturePage (record / playback looper)
 • Per encoder mode: standby (blue, brightness 5) → record (red + pulse animation) → playback (green, brightness 10).
