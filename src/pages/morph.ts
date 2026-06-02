@@ -196,7 +196,18 @@ export function MorphPage(): Page {
 				// Top knobs (0..11): press toggles a value lock → free direct control.
 				if (ev.id >= 0 && ev.id < OUTPUT_COUNT) {
 					if (!ev.down) return
-					locked[ev.id] = !locked[ev.id]
+					if (locked[ev.id]) {
+						// Unlock: keep the value exactly where it is and let it rejoin the
+						// morph as part of the phantom (no snap to the scene blend) —
+						// snapshot the current output and refresh the phantom to 100%.
+						for (let i = 0; i < OUTPUT_COUNT; i++) live[i] = out[i]
+						travel = 0
+						locked[ev.id] = false
+					} else {
+						// Lock: hold the param at its current (possibly blended) value.
+						live[ev.id] = out[ev.id]
+						locked[ev.id] = true
+					}
 					apply(ctx)
 					return
 				}
