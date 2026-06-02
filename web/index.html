@@ -132,6 +132,11 @@
 		<!-- Live monitor -->
 		<section class="panel span2">
 			<h2>Live Monitor — <span id="monSlot">–</span></h2>
+			<div class="row" id="modeRow" style="display:none;">
+				<label style="min-width:auto;">Mode</label>
+				<select id="modeSel"></select>
+				<span class="hint">note: press = note · precision: hold = fine · recall: press recalls, L+R saves, L recalls all</span>
+			</div>
 			<div class="values" id="values"></div>
 			<div class="row" style="margin-top:14px; margin-bottom:0;">
 				<label style="min-width:auto;">Raw</label>
@@ -153,13 +158,6 @@
 			</div>
 			<div id="presetList"></div>
 			<div class="hint">Layout dropdowns reassign a slot's page live. "Save as" snapshots the whole interface; Load applies a saved preset (persists across restart).</div>
-		</section>
-
-		<!-- Basic page modes -->
-		<section class="panel span2">
-			<h2>Basic Page Modes</h2>
-			<div id="modeGrid"></div>
-			<div class="hint">note = press sends note + brightness; precision = hold a knob to fine-tune (no note out); recall = press recalls a knob, L+R shift saves the scene, L shift recalls all.</div>
 		</section>
 
 		<!-- Global settings -->
@@ -187,7 +185,7 @@
 	<script>
 	(() => {
 		const SLOTS = ["a","b","c","d","e","f","g","h"]
-		const PAGE_OPTIONS = ["Basic","Gesture","StepSeq"]
+		const PAGE_OPTIONS = ["Basic","Gesture","Morph","StepSeq"]
 		const MODE_OPTIONS = ["note","precision","recall"]
 		let focused = null
 		const types = {}                 // slot -> page type
@@ -228,9 +226,9 @@
 			if (path === "/twister/out/preset/active") { activePreset = args[0] || ""; renderPresets(); return }
 			if (path === "/twister/out/settings") { try { settings = JSON.parse(args[0]) } catch {} ; renderSettings(); return }
 			let m = path.match(/^\/twister\/out\/page\/([a-h])\/type$/)
-			if (m) { types[m[1]] = args[0]; renderFocusGrid(); renderLayout(); renderModes(); return }
+			if (m) { types[m[1]] = args[0]; renderFocusGrid(); renderLayout(); renderModeControl(); return }
 			m = path.match(/^\/twister\/out\/page\/([a-h])\/mode$/)
-			if (m) { modes[m[1]] = args[0]; renderModes(); return }
+			if (m) { modes[m[1]] = args[0]; renderModeControl(); return }
 			m = path.match(/^\/twister\/out\/page\/([a-h])\/index\/(\d+)\/value$/)
 			if (m) { values[m[1]][+m[2]] = Number(args[0]); if (m[1] === focused) renderValues(); return }
 		}
@@ -251,7 +249,7 @@
 			if (!SLOTS.includes(slot)) return
 			focused = slot
 			document.getElementById("monSlot").textContent = slot.toUpperCase() + (types[slot] ? ` · ${types[slot]}` : "")
-			renderFocusGrid(); renderValues()
+			renderFocusGrid(); renderValues(); renderModeControl()
 		}
 
 		// ---- Value monitor ----
@@ -290,28 +288,22 @@
 			})
 		}
 
-		// ---- Basic page modes ----
-		const modeGrid = document.getElementById("modeGrid")
-		function renderModes() {
-			modeGrid.innerHTML = ""
-			const basic = SLOTS.filter(s => types[s] === "Basic")
-			if (!basic.length) { modeGrid.innerHTML = '<div class="hint">No Basic pages in the current layout.</div>'; return }
-			basic.forEach(s => {
-				const row = document.createElement("div")
-				row.className = "row"
-				const lab = document.createElement("label")
-				lab.style.minWidth = "auto"; lab.textContent = "Slot " + s.toUpperCase()
-				const sel = document.createElement("select")
-				MODE_OPTIONS.forEach(mo => {
-					const o = document.createElement("option")
-					o.value = mo; o.textContent = mo
-					if ((modes[s] || "note") === mo) o.selected = true
-					sel.appendChild(o)
-				})
-				sel.onchange = () => send(`/twister/in/page/${s}/mode`, sel.value)
-				row.appendChild(lab); row.appendChild(sel)
-				modeGrid.appendChild(row)
-			})
+		// ---- Basic page mode (for the focused slot, next to the monitor) ----
+		const modeRow = document.getElementById("modeRow")
+		const modeSel = document.getElementById("modeSel")
+		MODE_OPTIONS.forEach(mo => {
+			const o = document.createElement("option")
+			o.value = mo; o.textContent = mo
+			modeSel.appendChild(o)
+		})
+		modeSel.onchange = () => { if (focused) send(`/twister/in/page/${focused}/mode`, modeSel.value) }
+		function renderModeControl() {
+			if (focused && types[focused] === "Basic") {
+				modeRow.style.display = ""
+				modeSel.value = modes[focused] || "note"
+			} else {
+				modeRow.style.display = "none"
+			}
 		}
 
 		const presetList = document.getElementById("presetList")
@@ -420,7 +412,7 @@
 		})
 
 		// ---- Boot ----
-		renderFocusGrid(); renderValues(); renderLayout(); renderModes(); renderPresets(); connect()
+		renderFocusGrid(); renderValues(); renderLayout(); renderModeControl(); renderPresets(); connect()
 	})()
 	</script>
 </body>

@@ -2,10 +2,10 @@
 	"version": 1,
 	"slots": {
 		"a": {
-			"page": "Gesture"
+			"page": "Basic"
 		},
 		"b": {
-			"page": "Morph"
+			"page": "Gesture"
 		},
 		"c": {
 			"page": "Basic",
@@ -252,5 +252,5 @@
 			}
 		}
 	},
-	"activePreset": "Default"
+	"activePreset": null
 }
