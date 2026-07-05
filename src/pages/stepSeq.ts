@@ -72,18 +72,18 @@ const sanitizeClockIds = (ids: number[] | undefined): number[] => {
 }
 
 export function StepSeqPage(config?: StepSeqConfig): Page {
-const tracks = Array.from({ length: TRACK_COUNT }, () => createTrack())
-const lastOutputs = new Array<number>(TRACK_COUNT).fill(0)
-let highlightedTrack = 0
-let dirty = true
-let ctxRef: PageContext | null = null
-const trackClockFilters = Array.from({ length: TRACK_COUNT }, (_, idx) =>
- sanitizeClockIds(config?.tracks?.[idx]?.clockIds)
-)
+	const tracks = Array.from({ length: TRACK_COUNT }, () => createTrack())
+	const lastOutputs = new Array<number>(TRACK_COUNT).fill(0)
+	let highlightedTrack = 0
+	let dirty = true
+	let ctxRef: PageContext | null = null
+	const trackClockFilters = Array.from({ length: TRACK_COUNT }, (_, idx) =>
+		sanitizeClockIds(config?.tracks?.[idx]?.clockIds)
+	)
 
-const SHIFT_LATCH_DOUBLE_MS = 320
-let probabilityLatched = false
-let lastShiftTapAt = 0
+	const SHIFT_LATCH_DOUBLE_MS = 320
+	let probabilityLatched = false
+	let lastShiftTapAt = 0
 
 	const stepButtonsDown = new Set<number>()
 	let loopEdit: LoopEditState | null = null
@@ -151,121 +151,116 @@ let lastShiftTapAt = 0
 			emitTrackValue(ctx, trackId)
 			return
 		}
-	const probability = clamp(track.probabilities[track.playhead], 0, 100)
-	const roll = Math.random() * 100
-	if (roll >= probability) {
-		track.delay = 1
-		emitTrackValue(ctx, trackId)
-		return
-	}
+		const probability = clamp(track.probabilities[track.playhead], 0, 100)
+		const roll = Math.random() * 100
+		if (roll >= probability) {
+			track.delay = 1
+			emitTrackValue(ctx, trackId)
+			return
+		}
 		let next = track.playhead + 1
 		if (next > track.loopEnd) next = track.loopStart
 		track.playhead = clampStepIndex(next)
 		emitTrackValue(ctx, trackId)
 	}
 
-const clampProbability = (value: number) => clamp(Math.round(value), 0, 100)
+	const clampProbability = (value: number) => clamp(Math.round(value), 0, 100)
 
-const handleTrackPress = (ctx: PageContext, trackId: number) => {
-	if (highlightedTrack === trackId) return
-	highlightedTrack = trackId
-	dirty = true
-	ctx.setDirty()
-}
+	const handleTrackPress = (ctx: PageContext, trackId: number) => {
+		if (highlightedTrack === trackId) return
+		highlightedTrack = trackId
+		dirty = true
+		ctx.setDirty()
+	}
 
-const isProbabilityMode = (ctx: PageContext) => probabilityLatched || ctx.modifiers.shiftRight
+	const isProbabilityMode = (ctx: PageContext) => probabilityLatched || ctx.modifiers.shiftRight
 
-const probabilityStepSize = (ctx: PageContext) => Math.max(1, Math.round(128 / ctx.resolution))
+	const probabilityStepSize = (ctx: PageContext) => Math.max(1, Math.round(128 / ctx.resolution))
 
-const adjustTrackProbability = (ctx: PageContext, trackId: number, delta: number) => {
-	const change = delta * probabilityStepSize(ctx)
-	if (!change) return
-	const track = tracks[trackId]
-	let changed = false
-	for (let i = 0; i < STEP_COUNT; i++) {
-		const next = clampProbability(track.probabilities[i] + change)
-		if (next !== track.probabilities[i]) {
-			track.probabilities[i] = next
-			changed = true
+	const adjustTrackProbability = (ctx: PageContext, trackId: number, delta: number) => {
+		const change = delta * probabilityStepSize(ctx)
+		if (!change) return
+		const track = tracks[trackId]
+		let changed = false
+		for (let i = 0; i < STEP_COUNT; i++) {
+			const next = clampProbability(track.probabilities[i] + change)
+			if (next !== track.probabilities[i]) {
+				track.probabilities[i] = next
+				changed = true
+			}
+		}
+		if (!changed) return
+		dirty = true
+		ctx.setDirty()
+	}
+
+	const adjustStepProbability = (ctx: PageContext, trackId: number, stepIdx: number, delta: number) => {
+		const change = delta * probabilityStepSize(ctx)
+		if (!change) return
+		const track = tracks[trackId]
+		const next = clampProbability(track.probabilities[stepIdx] + change)
+		if (next === track.probabilities[stepIdx]) return
+		track.probabilities[stepIdx] = next
+		dirty = true
+		ctx.setDirty()
+	}
+
+	const handleStepTurn = (ctx: PageContext, stepEncIndex: number, delta: number) => {
+		const stepIdx = clampStepIndex(stepEncIndex)
+		if (isProbabilityMode(ctx)) {
+			adjustStepProbability(ctx, highlightedTrack, stepIdx, delta)
+			return
+		}
+		const track = tracks[highlightedTrack]
+		const stepSize = Math.max(1, Math.round(128 / ctx.resolution))
+		const nextValue = clamp(track.steps[stepIdx] + delta * stepSize, 0, 127)
+		if (track.steps[stepIdx] === nextValue) return
+		track.steps[stepIdx] = nextValue
+		if (track.playhead === stepIdx) {
+			emitTrackValue(ctx, highlightedTrack)
+		}
+		dirty = true
+		ctx.setDirty()
+	}
+
+	const handleStepPressDown = (stepIdx: number, ctx: PageContext) => {
+		stepButtonsDown.add(stepIdx)
+		if (!loopEdit) {
+			loopEdit = { primary: stepIdx, triggeredRange: false }
+			return
+		}
+		if (!loopEdit.triggeredRange && stepIdx !== loopEdit.primary) {
+			loopEdit.secondary = stepIdx
+			loopEdit.triggeredRange = true
+			applyLoopRange(ctx, highlightedTrack, loopEdit.primary, stepIdx)
 		}
 	}
-	if (!changed) return
-	dirty = true
-	ctx.setDirty()
-}
 
-const adjustStepProbability = (ctx: PageContext, trackId: number, stepIdx: number, delta: number) => {
-	const change = delta * probabilityStepSize(ctx)
-	if (!change) return
-	const track = tracks[trackId]
-	const next = clampProbability(track.probabilities[stepIdx] + change)
-	if (next === track.probabilities[stepIdx]) return
-	track.probabilities[stepIdx] = next
-	dirty = true
-	ctx.setDirty()
-}
-
-const handleStepTurn = (ctx: PageContext, stepEncIndex: number, delta: number) => {
-	const stepIdx = clampStepIndex(stepEncIndex)
-	if (isProbabilityMode(ctx)) {
-		adjustStepProbability(ctx, highlightedTrack, stepIdx, delta)
-		return
-	}
-	const track = tracks[highlightedTrack]
-	const stepSize = Math.max(1, Math.round(128 / ctx.resolution))
-	const nextValue = clamp(track.steps[stepIdx] + delta * stepSize, 0, 127)
-	if (track.steps[stepIdx] === nextValue) return
-	track.steps[stepIdx] = nextValue
-	if (track.playhead === stepIdx) {
-		emitTrackValue(ctx, highlightedTrack)
-	}
-	dirty = true
-	ctx.setDirty()
-}
-
-const handleStepPressDown = (stepIdx: number, ctx: PageContext) => {
-	stepButtonsDown.add(stepIdx)
-	if (!loopEdit) {
-		loopEdit = { primary: stepIdx, triggeredRange: false }
-		return
-	}
-	if (!loopEdit.triggeredRange && stepIdx !== loopEdit.primary) {
-		loopEdit.secondary = stepIdx
-		loopEdit.triggeredRange = true
-		applyLoopRange(ctx, highlightedTrack, loopEdit.primary, stepIdx)
-	}
-}
-
-const handleStepPressUp = (stepIdx: number, ctx: PageContext) => {
-	stepButtonsDown.delete(stepIdx)
-	if (!loopEdit) return
-	if (!loopEdit.triggeredRange && stepIdx === loopEdit.primary) {
-		setSingleLoopEndpoint(ctx, stepIdx)
-	}
-	if (stepButtonsDown.size === 0) {
+	const handleStepPressUp = (stepIdx: number, ctx: PageContext) => {
+		stepButtonsDown.delete(stepIdx)
+		if (!loopEdit) return
 		if (!loopEdit.triggeredRange && stepIdx === loopEdit.primary) {
 			setSingleLoopEndpoint(ctx, stepIdx)
 		}
-		loopEdit = null
+		if (stepButtonsDown.size === 0) loopEdit = null
 	}
-}
 
 	const renderFrame = (): LedFrame => {
 		const frame = {} as LedFrame
 		const showProbability = probabilityLatched || (ctxRef?.modifiers.shiftRight ?? false)
 
-	for (const trackEnc of TRACK_ENCODERS) {
-		const trackId = trackEnc
-		const isHighlighted = highlightedTrack === trackId
-		const ringValue = showProbability ? 0 : clamp(lastOutputs[trackId], 0, 127)
-		frame[trackEnc as EncId] = {
-			ring: ringValue,
-			rgb: TRACK_COLORS[trackId],
-			ledBrightness: isHighlighted ? 29 : 10,
-			ringBrightness: 31,
-			anim: "none",
+		for (const trackEnc of TRACK_ENCODERS) {
+			const trackId = trackEnc
+			const isHighlighted = highlightedTrack === trackId
+			const ringValue = showProbability ? 0 : clamp(lastOutputs[trackId], 0, 127)
+			frame[trackEnc as EncId] = {
+				ring: ringValue,
+				rgb: TRACK_COLORS[trackId],
+				ledBrightness: isHighlighted ? 29 : 10,
+				ringBrightness: 31,
+				anim: "none",
+			}
 		}
-	}
 
 		const track = tracks[highlightedTrack]
 		const baseColor = TRACK_COLORS[highlightedTrack]
@@ -277,9 +272,9 @@ const handleStepPressUp = (stepIdx: number, ctx: PageContext) => {
 				stepIndex >= track.loopStart && stepIndex <= track.loopEnd
 			const isPlayhead = withinLoop && stepIndex === track.playhead
 			const ledBrightness = isPlayhead ? 29 : withinLoop ? 15 : 3
-		const ringValue = showProbability
-			? clamp(Math.round((track.probabilities[stepIndex] / 100) * 127), 0, 127)
-			: track.steps[stepIndex]
+			const ringValue = showProbability
+				? clamp(Math.round((track.probabilities[stepIndex] / 100) * 127), 0, 127)
+				: track.steps[stepIndex]
 			const rgb = isPlayhead ? playheadColor : baseColor
 
 			const state: LedState = {
@@ -325,42 +320,42 @@ const handleStepPressUp = (stepIdx: number, ctx: PageContext) => {
 					}
 					return
 				}
-			case "encoder/turn": {
-				if (ev.id >= 0 && ev.id <= 3) {
-					if (isProbabilityMode(ctx)) {
-						adjustTrackProbability(ctx, ev.id, ev.delta)
+				case "encoder/turn": {
+					if (ev.id >= 0 && ev.id <= 3) {
+						if (isProbabilityMode(ctx)) {
+							adjustTrackProbability(ctx, ev.id, ev.delta)
+						}
+						return
+					}
+					if (
+						ev.id >= STEP_ENCODER_OFFSET &&
+						ev.id <= STEP_ENCODER_OFFSET + STEP_COUNT - 1
+					) {
+						handleStepTurn(ctx, ev.id - STEP_ENCODER_OFFSET, ev.delta)
 					}
 					return
 				}
-				if (
-					ev.id >= STEP_ENCODER_OFFSET &&
-					ev.id <= STEP_ENCODER_OFFSET + STEP_COUNT - 1
-				) {
-					handleStepTurn(ctx, ev.id - STEP_ENCODER_OFFSET, ev.delta)
-				}
-				return
-			}
-			case "side/shift": {
-				if (ev.side === "right") {
-					if (ev.down) {
-						const now = Date.now()
-						if (probabilityLatched) {
-							probabilityLatched = false
-						} else if (now - lastShiftTapAt <= SHIFT_LATCH_DOUBLE_MS) {
-							probabilityLatched = true
+				case "side/shift": {
+					if (ev.side === "right") {
+						if (ev.down) {
+							const now = Date.now()
+							if (probabilityLatched) {
+								probabilityLatched = false
+							} else if (now - lastShiftTapAt <= SHIFT_LATCH_DOUBLE_MS) {
+								probabilityLatched = true
+							}
+							lastShiftTapAt = now
+							dirty = true
+							ctx.setDirty()
+						} else if (!probabilityLatched) {
+							dirty = true
+							ctx.setDirty()
 						}
-						lastShiftTapAt = now
-						dirty = true
-						ctx.setDirty()
-					} else if (!probabilityLatched) {
-						dirty = true
-						ctx.setDirty()
 					}
+					return
 				}
-				return
-			}
-			default:
-				return
+				default:
+					return
 			}
 		},
 		onOsc(path, args, ctx) {

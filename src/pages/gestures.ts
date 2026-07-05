@@ -1,245 +1,241 @@
-/* Task: GesturePage (standby/record/playback per-encoder with looping)
-Spec: /src/Architecture.md
-- Values are 0..127 ints; deltas apply only in standby/record; ignored in playback.
-- States:
-  Standby  -> Blue,  brightness 5,  anim none; values may be set via OSC.
-  Record   -> Red,   anim 'pulse' (brightness ignored that burst); record timeline.
-  Playback -> Green, brightness 10, anim none; loop recorded gesture.
-- Cycle on encoder button press: Standby -> Record -> Playback -> Standby (clear rec).
-- OSC out on any value change: /twister/out/page_{a..h}/index/<id>/value <0..1 <= 5dp>
-- OSC in (only in standby): /twister/in/page_{x}/index/<id>/set <normFloat>
-*/
+/* GesturePage — per-encoder record/playback looper.
+ *
+ * Value is a float 0..1 (the real processing/OSC resolution); the 0..127 ring is
+ * LED feedback only. Each encoder cycles through three modes on button press:
+ *   standby  (blue,  brightness 5)  — turns edit the value directly; OSC /set
+ *                                     is accepted.
+ *   record   (red, pulsing)         — turns edit the value and are appended to
+ *                                     a timeline of (t, v) points.
+ *   playback (green, brightness 10) — the recorded timeline loops on a 20ms
+ *                                     tick with linear interpolation; turns
+ *                                     are ignored.
+ * A third press (from playback) returns to standby and clears the recording.
+ *
+ * OSC: value out `/index/<id>/value <0..1>` on any change — playback ticks
+ * dedupe against the last-sent 5dp value so a static (or held) loop segment
+ * doesn't spam identical messages every 20ms. In: `/index/<id>/set <0..1>`,
+ * accepted only in standby.
+ */
 
-import type { Page, LedFrame, LedState, EncId, PageContext } from '../core/types.js';
-import colors from '../config/colors.json' with { type: 'json' };
-import { clamp, to127, toFixedN } from '../util/scale.js';
+import { Page, LedFrame, EncId, PageContext } from "../core/types.js"
+import colors from "../config/colors.json" with { type: "json" }
+import { clamp, to127, toFixedN } from "../util/scale.js"
 
-type Mode = 'standby' | 'record' | 'playback';
+type Mode = "standby" | "record" | "playback"
 
-type Point = { t: number; v: number }; // ms since record start, value 0..127
+type Point = { t: number; v: number } // ms since record start, value float 0..1
 
 const asEncId = (n: number): EncId => {
-  if (!Number.isInteger(n) || n < 0 || n > 15) throw new Error(`EncId out of range: ${n}`);
-  return n as EncId;
-};
+	if (!Number.isInteger(n) || n < 0 || n > 15) throw new Error(`EncId out of range: ${n}`)
+	return n as EncId
+}
+
+const COLOR_BLUE = Number(colors.blue ?? 1)
+const COLOR_RED = Number(colors.red ?? 80)
+const COLOR_GREEN = Number(colors.green ?? 60)
+
+const STANDBY_BRIGHTNESS = 5
+const RECORD_BRIGHTNESS = 29 // pulse overrides brightness at the device (R3)
+const PLAYBACK_BRIGHTNESS = 10
+const PLAYBACK_TICK_MS = 20
 
 export function GesturePage(): Page {
-  // Per-encoder state
-  const vals   = new Int16Array(16);                 // 0..127
-  const mode   = Array<Mode>(16).fill('standby');    // current mode per enc
-  const rec    = Array.from({ length: 16 }, () => [] as Point[]); // recorded timelines
-    const recT0:  number[] = Array(16).fill(0);  // ✅ safe up to 2^53
-    const playT0: number[] = Array(16).fill(0);  // ✅ safe up to 2^53
-  const timers = new Array<ReturnType<typeof setInterval> | null>(16).fill(null);
+	const vals = new Array<number>(16).fill(0) // float 0..1 (LED 0..127 is display only)
+	const mode = Array<Mode>(16).fill("standby")
+	const rec = Array.from({ length: 16 }, () => [] as Point[]) // recorded timelines
+	const recT0 = new Array<number>(16).fill(0)
+	const playT0 = new Array<number>(16).fill(0)
+	const timers = new Array<ReturnType<typeof setInterval> | null>(16).fill(null)
+	const lastEmitted = new Array<number>(16).fill(NaN) // last 5dp value sent, per encoder
 
-  let dirty = true;
-  let ctxRef: PageContext | null = null;
+	let dirty = true
+	let ctxRef: PageContext | null = null
 
-  const emitPageType = (ctx: PageContext) => {
-    ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/type`, 'Gesture');
-  };
+	const emitPageType = (ctx: PageContext) => {
+		ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/type`, "Gesture")
+	}
 
-  const COLOR_BLUE  = Number(colors.blue  ?? 1);
-  const COLOR_RED   = Number(colors.red   ?? 80);
-  const COLOR_GREEN = Number(colors.green ?? 60);
+	const emitOsc = (ctx: PageContext, i: EncId) => {
+		const v = toFixedN(vals[i], 5)
+		if (lastEmitted[i] === v) return
+		lastEmitted[i] = v
+		ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/index/${i}/value`, v)
+	}
 
-  // --- helpers ---------------------------------------------------------------
+	const stopTimer = (i: EncId) => {
+		if (timers[i]) {
+			clearInterval(timers[i]!)
+			timers[i] = null
+		}
+	}
 
-  const beginRecord = (i: EncId) => {
-    stopTimer(i);
-    rec[i] = [{ t: 0, v: vals[i] }];     // start from current value
-    recT0[i] = Date.now();
-    mode[i] = 'record';
-    markDirty();
-  };
+	const beginRecord = (i: EncId) => {
+		stopTimer(i)
+		rec[i] = [{ t: 0, v: vals[i] }] // start from the current value
+		recT0[i] = Date.now()
+		mode[i] = "record"
+		dirty = true
+	}
 
-  const finalizeRecording = (i: EncId) => {
-  const tl = rec[i];
-  let t = Date.now() - recT0[i];
+	const finalizeRecording = (i: EncId) => {
+		const tl = rec[i]
+		let t = Date.now() - recT0[i]
+		if (tl.length === 0) tl.push({ t: 0, v: vals[i] }) // no turns happened; start at t=0
+		const last = tl[tl.length - 1]
+		// Force strictly increasing time so playback duration is always > 0.
+		if (t <= last.t) t = last.t + 1
+		// Always append a final point, even if the value didn't change, so
+		// trailing silence at the end of the take is recorded and loops cleanly.
+		tl.push({ t, v: vals[i] })
+	}
 
-  if (tl.length === 0) {
-    // no turns happened at all — start at t=0 for completeness
-    tl.push({ t: 0, v: vals[i] });
-  }
+	const beginPlayback = (i: EncId) => {
+		stopTimer(i)
+		mode[i] = "playback"
+		const tl = rec[i]
+		if (tl.length < 2) {
+			// Nothing to interpolate; hold the static value.
+			dirty = true
+			return
+		}
+		playT0[i] = Date.now()
+		timers[i] = setInterval(() => tickPlayback(i), PLAYBACK_TICK_MS)
+		dirty = true
+	}
 
-  const last = tl[tl.length - 1];
+	const backToStandby = (i: EncId) => {
+		stopTimer(i)
+		rec[i] = []
+		mode[i] = "standby"
+		dirty = true
+	}
 
-  // ensure strictly increasing time so dur > 0
-  if (t <= last.t) t = last.t + 1;
+	// Playback interpolation at the current time; modular over the take's
+	// duration, wrapping via a synthetic segment back to the first value.
+	const tickPlayback = (i: EncId) => {
+		if (!ctxRef) return
+		const tl = rec[i]
+		if (tl.length < 2) return
 
-  // ALWAYS push a final endpoint, even if value didn't change
-  tl.push({ t, v: vals[i] });
-};
+		const dur = tl[tl.length - 1].t // ms total
+		if (dur <= 0) return
 
-  const beginPlayback = (i: EncId) => {
-  stopTimer(i);
-  const tl = rec[i];
-  if (tl.length < 2) {
-    // static playback; nothing to interpolate
-    mode[i] = 'playback';
-    markDirty();
-    return;
-  }
-  mode[i] = 'playback';
-  playT0[i] = Date.now();
-  timers[i] = setInterval(() => tickPlayback(i), 20);
-  console.log('PLAY dur=', rec[i][rec[i].length-1].t, 'pts=', rec[i].length, rec[i].slice(-5));
-  markDirty();
-};
+		const t = (Date.now() - playT0[i]) % dur // 0..dur-ε
 
-  const backToStandby = (i: EncId) => {
-    stopTimer(i);
-    rec[i] = [];
-    mode[i] = 'standby';
-    markDirty();
-  };
+		// First point with t past the current time (always exists: last.t == dur > t).
+		let idx = 0
+		while (idx < tl.length && tl[idx].t <= t) idx++
 
-  const stopTimer = (i: EncId) => {
-    if (timers[i]) { clearInterval(timers[i]!); timers[i] = null; }
-  };
+		const a = tl[Math.max(0, idx - 1)]
+		const b = idx >= tl.length ? { t: dur, v: tl[0].v } : tl[idx]
 
-  const markDirty = () => {
-    dirty = true;
-    // If the page is focused, this will push immediately (PageManager wiring)
-    ctxRef?.setDirty();
-  };
+		const span = Math.max(1, b.t - a.t)
+		const u = (t - a.t) / span // 0..1
+		const v = clamp(a.v + u * (b.v - a.v), 0, 1)
 
-  const emitOsc = (i: EncId) => {
-    if (!ctxRef) return;
-    const f = toFixedN(vals[i] / 127, 5);
-    ctxRef.osc.send(
-      `/twister/out/page/${ctxRef.slotLabel}/index/${i}/value`,
-      f
-    );
-  };
+		if (v !== vals[i]) {
+			vals[i] = v
+			dirty = true
+			ctxRef.setDirty()
+			emitOsc(ctxRef, i)
+		}
+	}
 
-  // Playback interpolation at current time
-  const tickPlayback = (i: EncId) => {
-  const tl = rec[i];
-  if (tl.length < 2) return;
+	return {
+		init(ctx) {
+			ctxRef = ctx
+			emitPageType(ctx)
+			for (let i = 0; i < 16; i++) vals[i] = 0
+			dirty = true
+		},
+		onFocus(ctx) {
+			ctxRef = ctx
+			emitPageType(ctx)
+			dirty = true
+		},
+		onBlur() {
+			// Keep timers running (playback continues); LEDs simply aren't
+			// pushed for an unfocused page (R6).
+		},
+		onEvent(ev, ctx) {
+			ctxRef = ctx
+			if (ev.type === "encoder/press") {
+				if (!ev.down) return
+				const i = ev.id
+				if (mode[i] === "standby") {
+					beginRecord(i)
+				} else if (mode[i] === "record") {
+					finalizeRecording(i)
+					beginPlayback(i)
+				} else {
+					backToStandby(i)
+				}
+				return
+			}
+			if (ev.type === "encoder/turn") {
+				const i = ev.id
+				if (mode[i] === "playback") return // ignore deltas while playing
+				const step = (128 / ctx.resolution) / 127
+				vals[i] = clamp(vals[i] + ev.delta * step, 0, 1)
 
-  const dur = tl[tl.length - 1].t;     // ms total
-  if (dur <= 0) return;
+				if (mode[i] === "record") {
+					// Monotonic timestamp: force strictly increasing so two turns in
+					// the same millisecond don't collapse into one point.
+					const tRaw = Date.now() - recT0[i]
+					const tl = rec[i]
+					const lastT = tl.length ? tl[tl.length - 1].t : 0
+					const t = tRaw <= lastT ? lastT + 1 : tRaw
+					// Only append when the value changed, to keep the timeline compact.
+					if (tl.length === 0 || tl[tl.length - 1].v !== vals[i]) {
+						tl.push({ t, v: vals[i] })
+					}
+				}
 
-  const t = (Date.now() - playT0[i]) % dur; // 0..dur-ε
+				dirty = true
+				emitOsc(ctx, i)
+			}
+		},
+		onOsc(path, args, ctx) {
+			ctxRef = ctx
+			// Only accept /set while in standby.
+			const m = path.match(/^\/index\/(\d{1,2})\/set$/)
+			if (!m) return
+			const idNum = Number(m[1])
+			if (!Number.isInteger(idNum) || idNum < 0 || idNum > 15) return
+			const id = asEncId(idNum)
+			if (mode[id] !== "standby") return
 
-  // Find first idx with tl[idx].t > t (there is always one, because last.t == dur > t)
-  let idx = 0;
-  while (idx < tl.length && tl[idx].t <= t) idx++;
+			const v = Number(args[0])
+			if (!Number.isFinite(v)) return
 
-  // Segment [a,b]; for wrap, b is a synthetic endpoint at (dur, first.v)
-  const a = tl[Math.max(0, idx - 1)];
-  const b = (idx >= tl.length)
-    ? { t: dur, v: tl[0].v }
-    : tl[idx];
+			vals[id] = clamp(v, 0, 1)
+			dirty = true
+			emitOsc(ctx, id)
+		},
+		render(): LedFrame | undefined {
+			if (!dirty) return
+			dirty = false
 
-  const span = Math.max(1, b.t - a.t);
-  const u = (t - a.t) / span;                 // 0..1
-  const v = Math.round(a.v + u * (b.v - a.v));
-
-  if (v !== vals[i]) {
-    vals[i] = clamp(v, 0, 127);
-    emitOsc(i);
-    markDirty();
-  }
-};
-
-  // --- Page interface --------------------------------------------------------
-
-  return {
-    init(ctx) {
-      ctxRef = ctx;
-      emitPageType(ctx);
-      for (let i = 0; i < 16; i++) vals[i] = 0;
-      dirty = true;
-    },
-    onFocus(ctx) {
-      emitPageType(ctx);
-      dirty = true;
-    },
-    onBlur()  { /* keep timers running; LEDs won’t update while unfocused */ },
-    dispose() { for (let i = 0; i < 16; i++) stopTimer(i as EncId); ctxRef = null; },
-
-    onEvent(ev, ctx) {
-    if (ev.type === 'encoder/press' && ev.down) {
-        const i = ev.id;
-        if (mode[i] === 'standby') {
-            beginRecord(i);
-        } else if (mode[i] === 'record') {
-            finalizeRecording(i as EncId);   // ✅ add final point
-            beginPlayback(i as EncId);
-        } else { // playback
-            backToStandby(i as EncId);
-        }
-        return;
-    }
-
-      if (ev.type === 'encoder/turn') {
-        const i = ev.id;
-        if (mode[i] === 'playback') return; // ignore deltas while playing
-        // apply delta (standby or record)
-        const step = 128 / ctx.resolution;
-        const before = vals[i];
-        vals[i] = clamp(before + Math.round(ev.delta * step), 0, 127);
-
-        if (mode[i] === 'record') {
-    // Monotonic timestamp
-    const tRaw = Date.now() - recT0[i];
-    const tl = rec[i];
-    const lastT = tl.length ? tl[tl.length - 1].t : 0;
-    const t = tRaw <= lastT ? lastT + 1 : tRaw;
-
-    // Only append when value changed (keeps shape compact) — time is strictly increasing now
-    if (tl.length === 0 || tl[tl.length - 1].v !== vals[i]) {
-      tl.push({ t, v: vals[i] });
-    }
-  }
-        if (vals[i] !== before) {
-          emitOsc(i);
-          markDirty();
-        }
-      }
-    },
-
-   onOsc(path, args, ctx) {
-        // Only accept set when in standby
-        const m = path.match(/^\/index\/(\d{1,2})\/set$/);
-        if (!m) return;
-
-        const idNum = Number(m[1]) | 0;       // or: parseInt(m[1], 10)
-        if (idNum < 0 || idNum > 15) return;
-
-        const id = asEncId(idNum);            // ✅ narrow to EncId
-        if (mode[id] !== 'standby') return;
-
-        const v = Number(args[0]);
-        if (!Number.isFinite(v)) return;
-
-        const val = clamp(Math.round(v * 127), 0, 127);
-        if (val !== vals[id]) {
-            vals[id] = val;
-            emitOsc(id);                        // ✅ now EncId
-            markDirty();
-        }
-    },
-
-    render(ctx): LedFrame | undefined {
-      if (!dirty) return;
-      dirty = false;
-
-      const mk = (o: Partial<LedState> = {}): LedState =>
-        ({ ring: 0, rgb: 110, ledBrightness: 5, ringBrightness: 31, anim: 'none', ...o });
-
-      const frame = {} as LedFrame;
-      for (let i = 0 as EncId; i < 16; i = (i + 1) as EncId) {
-        const m = mode[i];
-        const base: Partial<LedState> =
-          m === 'standby'  ? { rgb: COLOR_BLUE,  ledBrightness: 5,  anim: 'none'  } :
-          m === 'record'   ? { rgb: COLOR_RED,   ledBrightness: 29, anim: 'pulse' } : // pulse overrides brightness
-                             { rgb: COLOR_GREEN, ledBrightness: 10, anim: 'none'  };
-        frame[i] = mk({ ...base, ring: to127(vals[i]) });
-      }
-      return frame;
-    }
-  };
+			const out: any = {}
+			for (let i = 0; i < 16; i++) {
+				const m = mode[i]
+				const base =
+					m === "standby"
+						? { rgb: COLOR_BLUE, ledBrightness: STANDBY_BRIGHTNESS, anim: "none" }
+						: m === "record"
+							? { rgb: COLOR_RED, ledBrightness: RECORD_BRIGHTNESS, anim: "pulse" }
+							: { rgb: COLOR_GREEN, ledBrightness: PLAYBACK_BRIGHTNESS, anim: "none" }
+				out[i] = {
+					ring: to127(vals[i] * 127),
+					ringBrightness: 31,
+					...base,
+				}
+			}
+			return out
+		},
+		dispose() {
+			for (let i = 0; i < 16; i++) stopTimer(i as EncId)
+			ctxRef = null
+		},
+	}
 }
