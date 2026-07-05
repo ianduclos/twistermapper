@@ -63,6 +63,25 @@ describe("controlServer", () => {
 		ws.close()
 	})
 
+	it("tracks clientCount as clients connect and disconnect", async () => {
+		server = createControlServer({
+			port: PORT,
+			staticFile: UI_FILE,
+			onMessage: () => {},
+		})
+		expect(server.clientCount).toBe(0)
+
+		const ws = new WebSocket(WS_URL)
+		await open(ws)
+		// Give the server's 'connection' handler a tick to register the client.
+		await new Promise((r) => setTimeout(r, 50))
+		expect(server.clientCount).toBe(1)
+
+		ws.close()
+		await new Promise((r) => setTimeout(r, 50))
+		expect(server.clientCount).toBe(0)
+	})
+
 	it("ignores malformed frames without throwing", async () => {
 		const received: any[] = []
 		server = createControlServer({

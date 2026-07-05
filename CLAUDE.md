@@ -10,8 +10,9 @@ Headless Node/TypeScript daemon that sits between a **MIDI Fighter Twister (MFT)
 
 - `npm run dev` — run the daemon via tsx (`src/cli/index.ts`). Needs the MFT plugged in for real LEDs; OSC in 57121 / out 57120.
 - `npm run dev -- --ui` — also start the optional web UI (default http://localhost:57190; or `TWISTER_UI=1`, port via `--ui-port`/`TWISTER_UI_PORT`). Off by default; daemon is fully headless without it.
+- `npm run dev -- --fake` — virtual Twister mode (or `TWISTER_FAKE=1`): no MIDI hardware needed; web UI forced on, its 4×4 encoder grid mirrors the LEDs and sends turns/presses/side-buttons through the same input path as hardware (`/twister/ui/...`). Note: OSC ports still bind, so stop the launchd agent first.
 - `npm run build` — `tsc` typecheck + emit to `dist/`. Use `npx tsc --noEmit` for a quick check.
-- `npm test` — vitest (no tests exist yet; see Known gaps).
+- `npm test` — vitest; 7 suites (ledReconciler, renderLoop, inputDecoder, controlServer, singleInstance, scale, fakeMidiDriver), all green.
 - Diagnostic CLIs: `npm run probe` (LED probe), `npm run raw:probe` (raw MIDI), `npm run log` (log input), `npm run osc:send`.
 
 Port override: `--in`/`--out` flags or `TWISTER_IN`/`TWISTER_OUT` env (substring match on port name; defaults to "twister").
@@ -19,7 +20,7 @@ Port override: `--in`/`--out` flags or `TWISTER_IN`/`TWISTER_OUT` env (substring
 ## Layout
 
 - `src/core/` — `types.ts` (Page/LedFrame/InputEvent contracts), `pageManager.ts` (focus + routing + dirty→render→push).
-- `src/io/` — `midiDriver.ts` (the ONLY place that knows device channels/CC numbers), `inputDecoder.ts` (raw MIDI → InputEvent), `osc.ts` (UDP transport), `controlServer.ts` (optional HTTP+WS for the web UI).
+- `src/io/` — `midiDriver.ts` (the ONLY place that knows device channels/CC numbers), `fakeMidiDriver.ts` (no-op driver for `--fake`), `inputDecoder.ts` (raw MIDI → InputEvent), `osc.ts` (UDP transport), `controlServer.ts` (optional HTTP+WS for the web UI).
 - `src/render/ledReconciler.ts` — per-encoder diff, flush ordering, pulse precedence, rate limiting. `renderLoop.ts` — fixed-rate loop, the single LED output path.
 - `web/index.html` — the optional web UI (no build step): pulse generator, page focus, live monitor. Talks WS `{path,args}` mirroring OSC.
 - `src/pages/` — `basic.ts`, `gestures.ts`, `stepSeq.ts` (page prototypes).

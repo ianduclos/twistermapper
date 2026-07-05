@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import midiLib from "@julusian/midi"
 import { tryAcquireLock, releaseLock } from "../util/singleInstance.js"
 import { NodeMidiDriver } from "../io/midiDriver.js" // real driver from Codex task
+import { FakeMidiDriver } from "../io/fakeMidiDriver.js"
 import { LedReconciler } from "../render/ledReconciler.js"
 import { createRenderLoop, type RenderLoop } from "../render/renderLoop.js"
 import { PageManager } from "../core/pageManager.js"
@@ -35,6 +36,7 @@ import type {
 	LedState,
 	LedFrame,
 	EncId,
+	InputEvent,
 } from "../core/types.js"
 import {
 	SLOT_INDICES,
@@ -70,13 +72,25 @@ const arg = (name: string) => {
 const inSel = arg("--in") ?? process.env.TWISTER_IN ?? "twister"
 const outSel = arg("--out") ?? process.env.TWISTER_OUT ?? "twister"
 
-// Optional web UI (off by default). Enable with --ui or TWISTER_UI=1.
+// Virtual Twister mode: run with no MIDI hardware attached. Forces the web UI
+// on (it's the only way to see/drive the virtual device) and skips the
+// hotplug watcher (there's no device to reconnect).
+const fakeMode = process.argv.includes("--fake") || process.env.TWISTER_FAKE === "1"
+
+// Optional web UI (off by default). Enable with --ui or TWISTER_UI=1 (or
+// implicitly by --fake).
 const uiEnabled =
-	process.argv.includes("--ui") || process.env.TWISTER_UI === "1"
+	fakeMode || process.argv.includes("--ui") || process.env.TWISTER_UI === "1"
 const uiPort = Number(arg("--ui-port") ?? process.env.TWISTER_UI_PORT ?? 57190)
 
+if (fakeMode) {
+	console.log("[Fake] Virtual Twister mode — no MIDI device; web UI forced on.")
+}
+
 // ---- MIDI in/out + reconciler ----
-let midiIo = new NodeMidiDriver()
+let midiIo: NodeMidiDriver | FakeMidiDriver = fakeMode
+	? new FakeMidiDriver()
+	: new NodeMidiDriver({ inPort: inSel, outPort: outSel })
 console.log("MIDI IN :", midiIo.getInPortName?.() ?? "(unknown)")
 console.log("MIDI OUT:", midiIo.getOutPortName?.() ?? "(unknown)")
 
@@ -312,6 +326,29 @@ const parseSlotLabel = (value: unknown): Slot | undefined => {
 	return slotFromLabel(value)
 }
 
+// --- Defensive arg parsing for /twister/ui/... (web UI + external OSC apps) ---
+function parseUiEncId(value: unknown): EncId | undefined {
+	const n = Number(value)
+	if (!Number.isInteger(n) || n < 0 || n > 15) return undefined
+	return n as EncId
+}
+
+function parseUiDelta(value: unknown): number | undefined {
+	const n = Number(value)
+	if (!Number.isInteger(n) || n === 0) return undefined
+	return clamp(n, -16, 16)
+}
+
+function parseUiDown(value: unknown): boolean | undefined {
+	if (value === 1 || value === true) return true
+	if (value === 0 || value === false) return false
+	return undefined
+}
+
+function parseUiSide(value: unknown): "left" | "right" | undefined {
+	return value === "left" || value === "right" ? value : undefined
+}
+
 function renderOverlay(focus: Slot): LedFrame {
 	const mk = (o: Partial<LedState> = {}): LedState => ({
 		ring: 0,
@@ -366,6 +403,33 @@ function renderTick() {
 		needsFocusPaint = false
 	}
 	rec.push(frame)
+	mirrorLedsToUi(frame)
+}
+
+// LED mirror: daemon -> web UI only, NEVER over OSC/UDP (R10 — the render loop
+// is the only push path to the device; this is a side-channel purely for the
+// browser's live grid). Sent via controlServer.broadcast directly rather than
+// emitOut(), since a 30fps JSON dump would spam any OSC listener (e.g. Max).
+// Compact wire format: JSON array of 16 [ring, rgb, ledBrightness,
+// ringBrightness, pulse01] tuples. The string-compare gate is what keeps an
+// idle daemon silent (an unchanged frame serializes identically).
+let lastLedMirrorJson: string | null = null
+
+function serializeLedFrame(frame: LedFrame): string {
+	const tuples = []
+	for (let i = 0 as EncId; i < 16; i = (i + 1) as EncId) {
+		const s = frame[i]
+		tuples.push([s.ring, s.rgb, s.ledBrightness, s.ringBrightness, s.anim === "pulse" ? 1 : 0])
+	}
+	return JSON.stringify(tuples)
+}
+
+function mirrorLedsToUi(frame: LedFrame) {
+	if (!controlServer || controlServer.clientCount <= 0) return
+	const json = serializeLedFrame(frame)
+	if (json === lastLedMirrorJson) return
+	lastLedMirrorJson = json
+	controlServer.broadcast("/twister/ui/leds", [json])
 }
 
 function clearMainHoldTimer() {
@@ -428,7 +492,7 @@ void (async () => {
 	// Hand ongoing output to the render loop now that the splash/settle are done.
 	needsFocusPaint = true
 	renderLoop.start()
-	startTwisterWatcher(pm)
+	if (!fakeMode) startTwisterWatcher(pm)
 })()
 
 // ---- Input: decoder wiring ----
@@ -436,9 +500,12 @@ const dec = createInputDecoder()
 
 dec.setShiftInterceptGlobals(false)
 
-// Update modifiers + route encoder events
-
-dec.onEvent((ev) => {
+// Update modifiers + route encoder events. Pulled out to a named function (not
+// an inline arrow to dec.onEvent) so the web UI's synthesized InputEvents
+// (routeControl's /twister/ui/... handlers) can be fed through the exact same
+// path as hardware input — modifiers, main-button hold/latch/overlay, and page
+// routing all live here, once.
+function handleInputEvent(ev: InputEvent) {
 	// Keep modifiers updated
 	let routeToPage = false
 	switch (ev.type) {
@@ -522,12 +589,14 @@ dec.onEvent((ev) => {
 	if (routeToPage || ev.type === "encoder/turn" || ev.type === "encoder/press") {
 		pm.onEvent(ev)
 	}
-})
+}
+
+dec.onEvent(handleInputEvent)
 
 // Translate raw MIDI (from NodeMidiDriver) to decoder messages
 midiIo.onMessage((msg) => dec.pushRaw(msg))
 console.log(
-	'Daemon up. Using port "Midi Fighter Twister". Twist & press to test.'
+	`Daemon up. Using port "${midiIo.getOutPortName?.() ?? "(unknown)"}". Twist & press to test.`
 )
 
 // --- Presets & global settings -----------------------------------------------
@@ -713,6 +782,59 @@ function routeControl(path: string, args: any[]) {
 		if (typeof args[0] === "string") setSettingsKey(args[0], args[1])
 		return
 	}
+	// /twister/in/ping <token?> → pong echo, so a patch opened after boot (and thus
+	// missing /twister/out/hello) can still detect the daemon is alive.
+	if (path === "/twister/in/ping") {
+		emitOut("/twister/out/pong", ...args)
+		return
+	}
+	// --- Virtual Twister input: /twister/ui/... synthesizes InputEvents and
+	// feeds them through handleInputEvent(), the exact same path hardware input
+	// takes. Works over both WS (the web UI grid) and OSC — an external OSC app
+	// can drive the virtual encoders too. Validated defensively; malformed args
+	// are ignored rather than throwing.
+	if (path === "/twister/ui/enc/turn") {
+		const id = parseUiEncId(args[0])
+		const delta = parseUiDelta(args[1])
+		if (id !== undefined && delta !== undefined) {
+			handleInputEvent({
+				type: "encoder/turn",
+				id,
+				delta,
+				shift: modifiers.shiftLeft || modifiers.shiftRight,
+			})
+		}
+		return
+	}
+	if (path === "/twister/ui/enc/press") {
+		const id = parseUiEncId(args[0])
+		const down = parseUiDown(args[1])
+		if (id !== undefined && down !== undefined) {
+			handleInputEvent({
+				type: "encoder/press",
+				id,
+				down,
+				shift: modifiers.shiftLeft || modifiers.shiftRight,
+			})
+		}
+		return
+	}
+	if (path === "/twister/ui/side/shift") {
+		const side = parseUiSide(args[0])
+		const down = parseUiDown(args[1])
+		if (side !== undefined && down !== undefined) {
+			handleInputEvent({ type: "side/shift", side, down })
+		}
+		return
+	}
+	if (path === "/twister/ui/side/global") {
+		const side = parseUiSide(args[0])
+		const down = parseUiDown(args[1])
+		if (side !== undefined && down !== undefined) {
+			handleInputEvent({ type: "side/global", side, down })
+		}
+		return
+	}
 	// /twister/in/page/<slot>/...
 	const m = path.match(/^\/twister\/in\/page\/([a-hA-H])\/(.+)$/)
 	if (m) {
@@ -743,6 +865,14 @@ if (uiEnabled) {
 			send("/twister/out/preset/list", listPresets())
 			send("/twister/out/preset/active", [activePresetName ?? ""])
 			send("/twister/out/settings", [JSON.stringify(settings)])
+			// Reset the mirror cache so late joiners get a frame even if the
+			// daemon is otherwise idle (unchanged frames are normally gated).
+			lastLedMirrorJson = null
+			const frame = currentDesired()
+			if (frame) {
+				lastLedMirrorJson = serializeLedFrame(frame)
+				send("/twister/ui/leds", [lastLedMirrorJson])
+			}
 		},
 	})
 }
@@ -760,7 +890,7 @@ async function rebuildIoAndSplash(pm: PageManager) {
 	} catch {
 		// ignore close errors; device may already be gone
 	}
-	midiIo = new NodeMidiDriver()
+	midiIo = new NodeMidiDriver({ inPort: inSel, outPort: outSel })
 	rec = new LedReconciler(midiIo)
 	midiIo.onMessage((msg) => dec.pushRaw(msg))
 	await runRandomSplash(rec)
@@ -772,7 +902,7 @@ async function rebuildIoAndSplash(pm: PageManager) {
 
 function startTwisterWatcher(pm: PageManager) {
 	const intervalMs = 1500
-	const match = "midi fighter twister"
+	const match = outSel.toLowerCase()
 
 	const hasTwisterOutput = (): boolean => {
 		const out = new midiLib.Output()
@@ -805,6 +935,9 @@ function startTwisterWatcher(pm: PageManager) {
 			if (!previousPresent && present) {
 				console.log("[Hotplug] Twister reconnected → splash")
 				await rebuildIoAndSplash(pm)
+			} else if (previousPresent && !present) {
+				console.log("[Hotplug] Twister disconnected → pausing LED output")
+				renderLoop.stop()
 			}
 			previousPresent = present
 		} finally {

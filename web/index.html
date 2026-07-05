@@ -72,6 +72,27 @@
 		.prow .pname { flex: 1; }
 		.prow .pname.active { color: var(--ok); font-weight: 600; }
 		input[type=text] { background: #0f1117; color: var(--txt); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; }
+
+		/* Virtual Twister panel */
+		.vtwister-row { display: flex; align-items: center; gap: 14px; }
+		.vtwister-side { display: flex; flex-direction: column; gap: 8px; flex: 0 0 auto; }
+		.vtside-btn {
+			font-size: 11px; padding: 8px 6px; min-width: 64px; text-align: center;
+			user-select: none;
+		}
+		.vtside-btn.active { background: var(--acc); color: #08111f; border-color: var(--acc); font-weight: 600; }
+		.vtwister-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; flex: 1 1 auto; }
+		.vtenc { background: #0f1117; border: 1px solid var(--line); border-radius: 8px; }
+		.vtenc svg { display: block; width: 100%; height: auto; }
+		.vtenc .vt-ring-bg { fill: none; stroke: var(--line); stroke-width: 10; stroke-linecap: round; }
+		.vtenc .vt-ring-val { fill: none; stroke: var(--acc); stroke-width: 10; stroke-linecap: round; cursor: ns-resize; }
+		.vtenc .vt-center { cursor: pointer; }
+		.vtenc .vt-label { fill: var(--mut); font-size: 9px; text-anchor: middle; pointer-events: none; }
+		.vtenc .vt-center.vt-pulse { animation: vtPulse 0.6s ease-in-out infinite; }
+		@keyframes vtPulse {
+			0%, 100% { fill-opacity: 1; }
+			50% { fill-opacity: 0.35; }
+		}
 	</style>
 </head>
 <body>
@@ -143,6 +164,23 @@
 				<button id="clearLog">clear</button>
 			</div>
 			<div id="log"></div>
+		</section>
+
+		<!-- Virtual Twister: 4x4 encoder grid mirroring the device, drives input back -->
+		<section class="panel span2">
+			<h2>Virtual Twister</h2>
+			<div class="vtwister-row">
+				<div class="vtwister-side">
+					<button id="vtShiftL" class="vtside-btn" title="Shift Left (sticky toggle)">Shift L</button>
+					<button id="vtGlobalL" class="vtside-btn" title="Global Left (momentary)">Global L</button>
+				</div>
+				<div class="vtwister-grid" id="vtGrid"></div>
+				<div class="vtwister-side">
+					<button id="vtShiftR" class="vtside-btn" title="Shift Right (sticky toggle)">Shift R</button>
+					<button id="vtMainR" class="vtside-btn" title="Main: hold = slot overlay, double-tap = latch">Main R</button>
+				</div>
+			</div>
+			<div class="hint">Drag a ring vertically (or scroll over it) to turn; click the center dot to press. Shift buttons are sticky toggles; Global L / Main R are momentary (hold).</div>
 		</section>
 	</main>
 
@@ -231,6 +269,13 @@
 			if (m) { modes[m[1]] = args[0]; renderModeControl(); return }
 			m = path.match(/^\/twister\/out\/page\/([a-h])\/index\/(\d+)\/value$/)
 			if (m) { values[m[1]][+m[2]] = Number(args[0]); if (m[1] === focused) renderValues(); return }
+			if (path === "/twister/ui/leds") {
+				try {
+					const frame = JSON.parse(args[0])
+					if (Array.isArray(frame)) frame.forEach((tuple, id) => updateVtEncoder(id, tuple))
+				} catch {}
+				return
+			}
 		}
 
 		// ---- Focus grid ----
@@ -403,6 +448,166 @@
 		skipEl.oninput = () => { skipVal.textContent = `${skipEl.value}%` }
 		document.getElementById("clearLog").onclick = () => { logEl.textContent = "" }
 
+		// ---- Virtual Twister: 4x4 encoder grid (index 0 top-left -> 15 bottom-right) ----
+		// Ring is an arc sweeping ~270° clockwise with a gap centered at the bottom.
+		// Angle convention here: 0° = top (12 o'clock), increasing clockwise.
+		const VT_R = 38            // ring radius (viewBox is 0 0 100 100)
+		const VT_START_DEG = 225   // ring value = 0 (just past the bottom gap, left side)
+		const VT_END_DEG = 495     // ring value = 127 (225 + 270° sweep; just before the gap, right side)
+
+		function vtPoint(deg) {
+			const rad = (deg * Math.PI) / 180
+			return { x: 50 + VT_R * Math.sin(rad), y: 50 - VT_R * Math.cos(rad) }
+		}
+		function vtArcPath(fromDeg, toDeg) {
+			const large = toDeg - fromDeg > 180 ? 1 : 0
+			const p0 = vtPoint(fromDeg), p1 = vtPoint(toDeg)
+			return `M ${p0.x.toFixed(2)} ${p0.y.toFixed(2)} A ${VT_R} ${VT_R} 0 ${large} 1 ${p1.x.toFixed(2)} ${p1.y.toFixed(2)}`
+		}
+		const VT_ARC_D = vtArcPath(VT_START_DEG, VT_END_DEG)
+
+		// MFT color index (1..126) -> CSS hue. Approximate by design: piecewise-linear
+		// interpolation between a handful of anchor points sampled from the device's
+		// cyclic palette, walked along the *descending* raw-degree path (so it wraps
+		// through negative values) then reduced mod 360.
+		const VT_COLOR_ANCHORS = [
+			[1, 240], [33, 180], [60, 120], [66, 60], [74, 30], [80, 0], [110, -75], [126, -115],
+		]
+		function vtColorIndexToCss(idx) {
+			const c = Math.max(1, Math.min(126, Number(idx) || 1))
+			for (let i = 0; i < VT_COLOR_ANCHORS.length - 1; i++) {
+				const [i0, h0] = VT_COLOR_ANCHORS[i]
+				const [i1, h1] = VT_COLOR_ANCHORS[i + 1]
+				if (c >= i0 && c <= i1) {
+					const t = (c - i0) / (i1 - i0)
+					const h = h0 + (h1 - h0) * t
+					return `hsl(${((h % 360) + 360) % 360}, 100%, 55%)`
+				}
+			}
+			const [, hLast] = VT_COLOR_ANCHORS[VT_COLOR_ANCHORS.length - 1]
+			return `hsl(${((hLast % 360) + 360) % 360}, 100%, 55%)`
+		}
+
+		const vtEls = []            // per-id { valuePath, centerCircle, label }
+		const vtGrid = document.getElementById("vtGrid")
+		const SVG_NS = "http://www.w3.org/2000/svg"
+
+		function vtMakeSvgEl(tag, attrs) {
+			const el = document.createElementNS(SVG_NS, tag)
+			for (const k in attrs) el.setAttribute(k, attrs[k])
+			return el
+		}
+
+		function renderVtGrid() {
+			vtGrid.innerHTML = ""
+			vtEls.length = 0
+			for (let id = 0; id < 16; id++) {
+				const cell = document.createElement("div")
+				cell.className = "vtenc"
+				const svg = vtMakeSvgEl("svg", { viewBox: "0 0 100 100" })
+
+				const bg = vtMakeSvgEl("path", { class: "vt-ring-bg", d: VT_ARC_D })
+				const val = vtMakeSvgEl("path", {
+					class: "vt-ring-val", d: VT_ARC_D, "pathLength": "1",
+					"stroke-dasharray": "0 2", "stroke-dashoffset": "0",
+				})
+				const center = vtMakeSvgEl("circle", { class: "vt-center", cx: 50, cy: 50, r: 22 })
+				const label = vtMakeSvgEl("text", { class: "vt-label", x: 50, y: 80 })
+				label.textContent = String(id)
+
+				svg.appendChild(bg); svg.appendChild(val); svg.appendChild(center); svg.appendChild(label)
+				cell.appendChild(svg)
+				vtGrid.appendChild(cell)
+				vtEls[id] = { valuePath: val, centerCircle: center }
+
+				// Ring = the "knob": vertical drag (±1 per ~4px) and wheel (±1/notch) both turn.
+				val.addEventListener("mousedown", (e) => {
+					e.preventDefault()
+					vtDrag = { id, lastY: e.clientY, accum: 0 }
+				})
+				val.addEventListener("wheel", (e) => {
+					e.preventDefault()
+					send("/twister/ui/enc/turn", id, e.deltaY < 0 ? 1 : -1)
+				}, { passive: false })
+
+				// Center circle = the button.
+				center.addEventListener("mousedown", (e) => {
+					e.preventDefault()
+					vtPressDown.add(id)
+					send("/twister/ui/enc/press", id, 1)
+				})
+				const vtRelease = () => {
+					if (vtPressDown.has(id)) { vtPressDown.delete(id); send("/twister/ui/enc/press", id, 0) }
+				}
+				center.addEventListener("mouseup", vtRelease)
+				center.addEventListener("mouseleave", vtRelease)
+
+				// Seed a dim default so the grid isn't blank before the first LED frame.
+				updateVtEncoder(id, [0, 1, 0, 1, 0])
+			}
+		}
+
+		let vtDrag = null           // { id, lastY, accum } while dragging a ring
+		const vtPressDown = new Set()
+		const VT_DRAG_STEP_PX = 4
+
+		document.addEventListener("mousemove", (e) => {
+			if (!vtDrag) return
+			const dy = vtDrag.lastY - e.clientY // dragging up = positive
+			vtDrag.lastY = e.clientY
+			vtDrag.accum += dy
+			while (Math.abs(vtDrag.accum) >= VT_DRAG_STEP_PX) {
+				const dir = vtDrag.accum > 0 ? 1 : -1
+				send("/twister/ui/enc/turn", vtDrag.id, dir)
+				vtDrag.accum -= dir * VT_DRAG_STEP_PX
+			}
+		})
+		document.addEventListener("mouseup", () => { vtDrag = null })
+
+		function updateVtEncoder(id, tuple) {
+			const els = vtEls[id]
+			if (!els || !Array.isArray(tuple)) return
+			const [ring, rgb, ledBrightness, ringBrightness, pulse01] = tuple
+			const ringFrac = Math.max(0, Math.min(1, (Number(ring) || 0) / 127))
+			els.valuePath.setAttribute("stroke-dasharray", `${ringFrac} 2`)
+			els.valuePath.style.opacity = Math.max(0.05, Math.min(1, (Number(ringBrightness) || 0) / 31))
+			els.centerCircle.setAttribute("fill", vtColorIndexToCss(rgb))
+			const ledOpacity = 0.12 + (Math.max(0, Math.min(29, Number(ledBrightness) || 0)) / 29) * 0.88
+			els.centerCircle.style.fillOpacity = ledOpacity
+			els.centerCircle.classList.toggle("vt-pulse", !!pulse01)
+		}
+
+		// ---- Side buttons: Shift (sticky toggle) / Global L & Main R (momentary) ----
+		function vtStickyToggle(btnId, side) {
+			const btn = document.getElementById(btnId)
+			let down = false
+			btn.onclick = () => {
+				down = !down
+				btn.classList.toggle("active", down)
+				send("/twister/ui/side/shift", side, down ? 1 : 0)
+			}
+		}
+		function vtMomentary(btnId, side) {
+			const btn = document.getElementById(btnId)
+			btn.addEventListener("mousedown", (e) => {
+				e.preventDefault()
+				btn.classList.add("active")
+				send("/twister/ui/side/global", side, 1)
+			})
+			const up = () => {
+				if (btn.classList.contains("active")) {
+					btn.classList.remove("active")
+					send("/twister/ui/side/global", side, 0)
+				}
+			}
+			btn.addEventListener("mouseup", up)
+			btn.addEventListener("mouseleave", up)
+		}
+		vtStickyToggle("vtShiftL", "left")
+		vtStickyToggle("vtShiftR", "right")
+		vtMomentary("vtGlobalL", "left")
+		vtMomentary("vtMainR", "right")
+
 		// ---- Tabs ----
 		document.querySelectorAll(".tabs button").forEach(btn => {
 			btn.onclick = () => {
@@ -412,7 +617,7 @@
 		})
 
 		// ---- Boot ----
-		renderFocusGrid(); renderValues(); renderLayout(); renderModeControl(); renderPresets(); connect()
+		renderFocusGrid(); renderValues(); renderLayout(); renderModeControl(); renderPresets(); renderVtGrid(); connect()
 	})()
 	</script>
 </body>

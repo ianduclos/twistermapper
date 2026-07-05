@@ -2,13 +2,13 @@ Overview (human-readable)
 
 This project is a headless Node.js “brain” for the MIDI Fighter Twister (MFT). It does three big things: 1. Decouples input from feedback. We treat encoder turns as relative deltas and render LEDs from our own virtual page state, not from the device firmware’s built-ins. That lets us build features like multiple “pages,” record/playback gestures, and visual overlays. 2. Owns the LEDs with a renderer + rate limits. We keep a cached “last sent” LED frame per encoder and diff to the new desired frame. A LedReconciler sends only what changed, in the right order, under strict burst and rolling caps so the Twister stays happy. Animations (e.g., pulse) are handled carefully to avoid clobbering brightness. 3. Speaks OSC to the DAW/Max world. Page changes and value changes go out over OSC as normalized floats; pages can also receive OSC to set values. We use simple, routable paths (e.g., /twister/out/page/a/index/1/value 0.92). There’s no GUI; the app is meant to sit between the Twister and your audio software.
 
-We currently ship two page prototypes: BasicPage (16 normalized values with direct LED monitoring) and GesturePage (per-encoder record→playback looper with proper loop wrap and “silence at end” recording). A Main overlay uses the side buttons to temporarily focus an index-selection page that highlights page slots and lets you switch focus with encoder presses. On boot we run a short boot splash (frames of LED color/brightness) to “warm” the hardware and then immediately paint the focused page twice to settle brightness deterministically.
+We currently ship four page prototypes: BasicPage (16 normalized values with selectable press modes), GesturePage (per-encoder record→playback looper with proper loop wrap and “silence at end” recording), StepSeqPage (clocked 4-track step sequencer), and MorphPage (scene morph with a dissolving phantom snapshot). A Main overlay uses the side buttons to temporarily focus an index-selection page that highlights page slots and lets you switch focus with encoder presses. On boot we run a short boot splash (frames of LED color/brightness) to “warm” the hardware and then immediately paint the focused page twice to settle brightness deterministically.
 
 ⸻
 
 Goal
 
-Headless Node.js app that decouples input deltas from LED feedback, with 8 loadable pages (A–H). The app drives a physical MIDI Fighter Twister and talks OSC. No UI.
+Headless Node.js app that decouples input deltas from LED feedback, with 8 loadable pages (A–H). The app drives a physical MIDI Fighter Twister and talks OSC. No GUI required (an optional web UI exists for control/monitoring, and a `--fake` virtual-device mode for development without hardware).
 
 Environment & build
 • Node + TypeScript (NodeNext ESM).
@@ -63,12 +63,14 @@ Out (core + page-specific):
 • /twister/out/preset/list <names…> → saved preset names (on connect, and after save/load/delete).
 • /twister/out/preset/active <name|""> → name of the active preset, "" when custom/unsaved.
 • /twister/out/settings <json> → current global settings (interaction timings + render.fps) as a JSON string.
+• /twister/out/pong <args…> → reply to /twister/in/ping, echoing the ping's args (e.g. a token).
 • Example (BasicPage): /twister/out/page/a/index/1/value 0.77380 (≤ 5 decimals).
 
 In (core):
 • /twister/in/focus/page <slotLetter> → focus page by letter (`a`–`h`).
 • /twister/in/clock <int> → external clock tick broadcast to all pages (StepSeqPage consumes IDs 0–3).
 • /twister/in/dump/global → request dumps from pages that support it (Basic: palette/values; Morph: scene vectors).
+• /twister/in/ping <token?> → liveness check; replies /twister/out/pong echoing any args. (/twister/out/hello only fires at daemon boot, so a patch opened later uses this to detect the daemon.)
 
 In (presets & global settings):
 • /twister/in/preset/list → request the preset list (replies /twister/out/preset/list).
@@ -91,7 +93,7 @@ In (page):
 
 OSC numeric rules:
 • Floats emitted with max 5 decimals.
-• Normalization is value / 127 on output; input normalized back to 0..127 (rounded).
+• Basic and Gesture keep values as native floats 0..1 (no internal quantization); StepSeq and Morph keep 0..127 ints internally and normalize by /127 outbound, scaling inputs back (rounded).
 
 ⸻
 
@@ -100,7 +102,14 @@ Control surface (OSC + optional web UI)
 • All outbound twister messages go through emitOut(): out to OSC/UDP AND mirrored to any connected web UI.
 • Web UI is OFF by default; enable with --ui or TWISTER_UI=1 (port via --ui-port / TWISTER_UI_PORT, default 57190). The daemon is fully headless without it.
 • Transport: there is NO internal clock. The pulse generator lives in the web UI (BPM, play/stop, skip %, per-pulse clock id 0–3), sending /twister/in/clock <id>. Browser timer jitter is acceptable for irregular/experimental use; move server-side only if tight timing is needed.
-• src/io/controlServer.ts: tiny HTTP (serves web/index.html) + WebSocket. WS protocol mirrors OSC as JSON { path, args }. On connect it pushes a state snapshot (current focus, each slot's page type, preset list + active preset, and global settings) so a late-joining UI is correct immediately.
+• src/io/controlServer.ts: tiny HTTP (serves web/index.html) + WebSocket. WS protocol mirrors OSC as JSON { path, args }. On connect it pushes a state snapshot (current focus, each slot's page type, preset list + active preset, global settings, and the current LED frame) so a late-joining UI is correct immediately.
+• Virtual Twister (`--fake` / TWISTER_FAKE=1): runs the daemon with no MIDI hardware — FakeMidiDriver (src/io/fakeMidiDriver.ts) no-ops the device, the hotplug watcher is skipped, and the web UI is forced on. Pages, OSC, and presets behave identically; the web UI's 4×4 encoder grid becomes the device.
+• /twister/ui/... is the virtual-device vocabulary, dispatched through the same routeControl (so external OSC apps can drive it too). Inputs synthesize InputEvents and feed handleInputEvent() — the exact code path hardware input takes, so modifiers, page routing, and Main-overlay hold/latch behave identically:
+  - /twister/ui/enc/turn <id 0..15> <delta ±1..16 int> → encoder turn (shift flag from current modifiers).
+  - /twister/ui/enc/press <id 0..15> <1|0> → encoder button.
+  - /twister/ui/side/shift <left|right> <1|0> → shift buttons.
+  - /twister/ui/side/global <left|right> <1|0> → global/Main buttons (right = Main: hold opens the overlay, double-tap latches).
+• LED mirror: the render loop broadcasts /twister/ui/leds <json> — 16 [ring, rgb, ledBrightness, ringBrightness, pulse01] tuples in human units — to web UI clients ONLY (never over OSC/UDP; a 30fps JSON stream would spam Max). Gated on frame change, so an idle daemon is silent. The web UI renders it as an interactive grid (ring drag/wheel = turn, center = press; MFT color indices approximated to CSS hues).
 • Global presets: a preset is an interface-only SystemConfig (slot→page + per-page config), one file per preset under configs/presets/. The active config lives in configs/slots.json. src/core/systemConfig.ts owns sanitize→factory (shared by boot + live apply); src/core/presetStore.ts is the filesystem layer. applySystemConfig() in cli/index.ts reloads pages live via PageManager.load and repaints through the render loop (no direct device push). This is the channel a Max patch will use to set the interface per open patch.
 
 ⸻
@@ -126,10 +135,12 @@ BasicPage (reference)
 • OSC in: /twister/in/page/<slot>/index/<id>/set <0..1>; /twister/in/page/<slot>/mode <note|precision|recall>.
 
 GesturePage (record / playback looper)
-• Per encoder mode: standby (blue, brightness 5) → record (red + pulse animation) → playback (green, brightness 10).
-• Record: capture (t, v0..127) points with strictly increasing timestamps (ms since record start). Append only on value change; on finalize always append a last point at button press time (even if value didn’t change) so end silence is recorded.
-• Playback: 20 ms tick; modular interpolation between points; wrap using a synthetic segment to the first value so loops are smooth. Ignore deltas while in playback.
-• OSC in: only accept /set in standby (external param control); reject in record/playback.
+• Values are **float 0..1** like BasicPage (`val += delta·normalStep`, `normalStep = (128/resolution)/127`, clamp 0..1); the 0..127 LED ring is display only.
+• Per encoder mode: standby (blue, brightness 5) → record (red + pulse animation) → playback (green, brightness 10); a third press returns to standby and clears the recording.
+• Record: capture (t ms, v float) points with strictly increasing timestamps (ms since record start). Append only on value change; on finalize always append a last point at button press time (even if value didn’t change) so end silence is recorded.
+• Playback: 20 ms tick; continuous (unquantized) linear interpolation between points; wrap using a synthetic segment to the first value so loops are smooth. Ignore deltas while in playback.
+• OSC out dedupes per encoder against the last-sent 5-decimal value, so flat/held loop segments don't re-emit every tick.
+• OSC in: only accept /set in standby (external param control, clamp 0..1, no rounding); reject in record/playback.
 • Keeps timers running off-focus; only LEDs for the focused page are sent.
 
 StepSeqPage (clocked 4-track sequencer)
@@ -213,10 +224,12 @@ Dirty & OSC semantics
 ⸻
 
 MIDI driver (Node)
-• Auto-selects the “Midi Fighter Twister” ports (exact/substr match); can be overridden via options.
+• Auto-selects the “Midi Fighter Twister” ports (exact/substr match); overridable at the CLI via `--in`/`--out` flags or `TWISTER_IN`/`TWISTER_OUT` env (both driver and hotplug watcher honor the override).
 • Provides setRing, setRGB, setLedBrightness, setRingBrightness, setPulse with the mappings above.
 • Exposes onMessage(cb) with decoded { type: 'cc'|'note', channel, number, value }.
 • close() releases ports cleanly (for tools/tests).
+• Hotplug: a 1.5 s watcher polls for the configured output port. On disconnect it pauses the render loop (no MIDI at a dead port); on reconnect it rebuilds driver + reconciler, re-runs the boot splash, and resumes the loop. Skipped entirely in `--fake` mode.
+• FakeMidiDriver (src/io/fakeMidiDriver.ts): same interface, all device I/O no-ops — the `--fake` stand-in. LED feedback reaches the web UI via the render-loop mirror (/twister/ui/leds), not this driver.
 
 ⸻
 
@@ -250,6 +263,5 @@ Known-good behaviors to preserve
 ⸻
 
 Out of scope for now (future ideas)
-• Hot-plug watcher to re-run splash on USB reconnect.
 • Full state sync at startup (Max → Node) via /twister/in/state … and /twister/out/state/ack.
 • More page types (sequencers, LFOs), pagination beyond A–H.

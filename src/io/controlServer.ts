@@ -18,6 +18,8 @@ export interface ControlServer {
 	/** Forward an outbound twister message to all connected UIs. */
 	broadcast: (path: string, args: Array<number | string | boolean>) => void
 	close: () => void
+	/** Number of currently OPEN WebSocket clients. */
+	readonly clientCount: number
 }
 
 export interface ControlServerOptions {
@@ -96,6 +98,13 @@ export function createControlServer(opts: ControlServerOptions): ControlServer {
 			try {
 				httpServer.close()
 			} catch {}
+		},
+		get clientCount() {
+			let count = 0
+			for (const client of wss.clients) {
+				if (client.readyState === WebSocket.OPEN) count++
+			}
+			return count
 		},
 	}
 }
