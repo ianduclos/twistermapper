@@ -2,7 +2,7 @@
 	"version": 1,
 	"slots": {
 		"a": {
-			"page": "Basic"
+			"page": "Morph"
 		},
 		"b": {
 			"page": "Gesture"
