@@ -6,5 +6,9 @@
 	},
 	"render": {
 		"fps": 30
+	},
+	"osc": {
+		"inPort": 57121,
+		"outPort": 57120
 	}
 }

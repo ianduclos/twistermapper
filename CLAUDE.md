@@ -15,7 +15,7 @@ Headless Node/TypeScript daemon that sits between a **MIDI Fighter Twister (MFT)
 - `npm test` — vitest; 7 suites (ledReconciler, renderLoop, inputDecoder, controlServer, singleInstance, scale, fakeMidiDriver), all green.
 - Diagnostic CLIs: `npm run probe` (LED probe), `npm run raw:probe` (raw MIDI), `npm run log` (log input), `npm run osc:send`.
 
-Port override: `--in`/`--out` flags or `TWISTER_IN`/`TWISTER_OUT` env (substring match on port name; defaults to "twister").
+Port override: `--in`/`--out` flags or `TWISTER_IN`/`TWISTER_OUT` env (substring match on MIDI port name; defaults to "twister"). OSC UDP ports (default in 57121 / out 57120) come from `configs/settings.json` → `osc.inPort`/`osc.outPort`, read once at boot — edit the file and restart to change them.
 
 ## Layout
 
@@ -23,9 +23,9 @@ Port override: `--in`/`--out` flags or `TWISTER_IN`/`TWISTER_OUT` env (substring
 - `src/io/` — `midiDriver.ts` (the ONLY place that knows device channels/CC numbers), `fakeMidiDriver.ts` (no-op driver for `--fake`), `inputDecoder.ts` (raw MIDI → InputEvent), `osc.ts` (UDP transport), `controlServer.ts` (optional HTTP+WS for the web UI).
 - `src/render/ledReconciler.ts` — per-encoder diff, flush ordering, pulse precedence, rate limiting. `renderLoop.ts` — fixed-rate loop, the single LED output path.
 - `web/index.html` — the optional web UI (no build step): pulse generator, page focus, live monitor. Talks WS `{path,args}` mirroring OSC.
-- `src/pages/` — `basic.ts`, `gestures.ts`, `stepSeq.ts` (page prototypes).
+- `src/pages/` — `basic.ts`, `gestures.ts`, `morph.ts`, `stepSeq.ts`, `blank.ts` (page prototypes; Blank is an inert no-op/LEDs-off page for unused slots).
 - `src/boot/bootSplashes.ts` — startup warm-up + deterministic settle paint.
-- `configs/slots.json` — slot→page mapping + per-page config. `configs/settings.json` — main-button interaction timings.
+- `configs/slots.json` — slot→page mapping + per-page config. `configs/settings.json` — main-button interaction timings, render fps, and OSC in/out ports.
 
 ## Invariants (do not break without intent)
 

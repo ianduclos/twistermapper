@@ -2,7 +2,7 @@ Overview (human-readable)
 
 This project is a headless Node.js “brain” for the MIDI Fighter Twister (MFT). It does three big things: 1. Decouples input from feedback. We treat encoder turns as relative deltas and render LEDs from our own virtual page state, not from the device firmware’s built-ins. That lets us build features like multiple “pages,” record/playback gestures, and visual overlays. 2. Owns the LEDs with a renderer + rate limits. We keep a cached “last sent” LED frame per encoder and diff to the new desired frame. A LedReconciler sends only what changed, in the right order, under strict burst and rolling caps so the Twister stays happy. Animations (e.g., pulse) are handled carefully to avoid clobbering brightness. 3. Speaks OSC to the DAW/Max world. Page changes and value changes go out over OSC as normalized floats; pages can also receive OSC to set values. We use simple, routable paths (e.g., /twister/out/page/a/index/1/value 0.92). There’s no GUI; the app is meant to sit between the Twister and your audio software.
 
-We currently ship four page prototypes: BasicPage (16 normalized values with selectable press modes), GesturePage (per-encoder record→playback looper with proper loop wrap and “silence at end” recording), StepSeqPage (clocked 4-track step sequencer), and MorphPage (scene morph with a dissolving phantom snapshot). A Main overlay uses the side buttons to temporarily focus an index-selection page that highlights page slots and lets you switch focus with encoder presses. On boot we run a short boot splash (frames of LED color/brightness) to “warm” the hardware and then immediately paint the focused page twice to settle brightness deterministically.
+We currently ship five page prototypes: BasicPage (16 normalized values with selectable press modes), GesturePage (per-encoder record→playback looper with proper loop wrap and “silence at end” recording), StepSeqPage (clocked 4-track step sequencer), MorphPage (scene morph with a dissolving phantom snapshot), and BlankPage (inert placeholder — ignores all input, LEDs stay dark; for slots not in use yet). A Main overlay uses the side buttons to temporarily focus an index-selection page that highlights page slots and lets you switch focus with encoder presses. On boot we run a short boot splash (frames of LED color/brightness) to “warm” the hardware and then immediately paint the focused page twice to settle brightness deterministically.
 
 ⸻
 
@@ -77,9 +77,9 @@ In (presets & global settings):
 • /twister/in/preset/save <name> → snapshot the live interface (soft capture: structural config — page per slot, palette/brightness, clock routing — NOT knob/step values) to configs/presets/<name>.json and mark it active.
 • /twister/in/preset/load <name> → apply a saved preset live (reloads all slots) and persist it to slots.json.
 • /twister/in/preset/delete <name> → delete configs/presets/<name>.json.
-• /twister/in/slot/<slot>/page <PageName> → reassign one slot's page live (Basic|Gesture|StepSeq); persists to slots.json and clears the active-preset marker.
+• /twister/in/slot/<slot>/page <PageName> → reassign one slot's page live (Basic|Blank|Gesture|Morph|StepSeq); persists to slots.json and clears the active-preset marker.
 • /twister/in/settings/get → request current global settings (replies /twister/out/settings).
-• /twister/in/settings/set <key> <value> → set one global setting live (keys: mainDoubleClickMs|mainHoldThresholdMs|debounceMs|fps); persists to settings.json; an fps change rebuilds the render loop.
+• /twister/in/settings/set <key> <value> → set one global setting live (keys: mainDoubleClickMs|mainHoldThresholdMs|debounceMs|fps); persists to settings.json; an fps change rebuilds the render loop. osc.inPort/osc.outPort are NOT live-settable here — see settings.json note below.
 • Names are restricted to [A-Za-z0-9 _-]{1,48} (safe filename; maps cleanly to a Max patch name later).
 
 In (page):
@@ -208,7 +208,7 @@ Config (JSON)
 • Color indices, channel/CC/note map, and any optional encoder index offset/map are defined in JSON.
 • configs/slots.json is the active SystemConfig: selects page prototypes (A–H), optional BasicPage encoder color/brightness palettes, and an optional `activePreset` marker. configs/presets/<name>.json hold saved interface-only SystemConfigs (same shape, no activePreset).
 • StepSeq slots may provide per-track clock lists (e.g., `{"tracks":[{"clockIds":[0,2,5]},...]}`) to decide which `/twister/in/clock` IDs advance each track (default 0).
-• configs/settings.json defines interaction timings (double-click window, hold threshold, debounce) for the Main overlay trigger, and render.fps (render-loop rate, default 30, clamped 1..120).
+• configs/settings.json defines interaction timings (double-click window, hold threshold, debounce) for the Main overlay trigger, render.fps (render-loop rate, default 30, clamped 1..120), and osc.inPort/osc.outPort (UDP ports, default 57121/57120, clamped 1..65535). OSC ports are read once at boot to bind the UDP socket — unlike fps, changing them requires a daemon restart, not just a live settings/set.
 • Only the MIDI driver knows about device numbers & channels; core code works with human-readable values:
 • LED brightness: human 0..29 → device 18..47.
 • Ring brightness: human 1..31 → device 65..95.

@@ -110,8 +110,122 @@ function emitOut(path: string, ...args: Array<number | string | boolean>) {
 	controlServer?.broadcast(path, args)
 }
 
-// --- OSC transport (defaults: in 57121, out 57120) ---
-const osc = createOsc()
+const SETTINGS_CONFIG_PATH = resolvePath(process.cwd(), "configs/settings.json")
+
+type Settings = {
+	interaction: {
+		mainDoubleClickMs: number
+		mainHoldThresholdMs: number
+		debounceMs: number
+	}
+	render: {
+		fps: number
+	}
+	osc: {
+		inPort: number
+		outPort: number
+	}
+}
+
+const DEFAULT_SETTINGS: Settings = {
+	interaction: {
+		mainDoubleClickMs: 320,
+		mainHoldThresholdMs: 200,
+		debounceMs: 20,
+	},
+	render: {
+		fps: 30,
+	},
+	osc: {
+		inPort: 57121,
+		outPort: 57120,
+	},
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+	typeof value === "object" && value !== null && !Array.isArray(value)
+
+// Load interaction timing overrides, tolerating missing or malformed files.
+const loadSettings = (): Settings => {
+	let parsed: unknown
+	try {
+		const raw = readFileSync(SETTINGS_CONFIG_PATH, "utf8")
+		parsed = JSON.parse(raw)
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException)?.code
+		if (code && code !== "ENOENT") {
+			console.warn("[Settings] Failed to read configs/settings.json:", err)
+		}
+		return { ...DEFAULT_SETTINGS }
+	}
+
+	if (!isRecord(parsed)) return { ...DEFAULT_SETTINGS }
+
+	const interactionNode = isRecord(parsed.interaction)
+		? (parsed.interaction as Record<string, unknown>)
+		: {}
+	const renderNode = isRecord(parsed.render)
+		? (parsed.render as Record<string, unknown>)
+		: {}
+	const oscNode = isRecord(parsed.osc)
+		? (parsed.osc as Record<string, unknown>)
+		: {}
+
+	const cleanNumber = (value: unknown, fallback: number) => {
+		if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+			return value
+		}
+		if (typeof value === "bigint" && value > 0n) {
+			return Number(value)
+		}
+		return fallback
+	}
+
+	return {
+		interaction: {
+			mainDoubleClickMs: cleanNumber(
+				interactionNode.mainDoubleClickMs,
+				DEFAULT_SETTINGS.interaction.mainDoubleClickMs
+			),
+			mainHoldThresholdMs: cleanNumber(
+				interactionNode.mainHoldThresholdMs,
+				DEFAULT_SETTINGS.interaction.mainHoldThresholdMs
+			),
+			debounceMs: cleanNumber(
+				interactionNode.debounceMs,
+				DEFAULT_SETTINGS.interaction.debounceMs
+			),
+		},
+		render: {
+			fps: clamp(
+				cleanNumber(renderNode.fps, DEFAULT_SETTINGS.render.fps),
+				1,
+				120
+			),
+		},
+		osc: {
+			inPort: clamp(
+				cleanNumber(oscNode.inPort, DEFAULT_SETTINGS.osc.inPort),
+				1,
+				65535
+			),
+			outPort: clamp(
+				cleanNumber(oscNode.outPort, DEFAULT_SETTINGS.osc.outPort),
+				1,
+				65535
+			),
+		},
+	}
+}
+
+// Mutable so the Global Settings UI can retune timings/fps live (read at use sites).
+// osc.inPort/outPort are read once at boot (see createOsc() below) — the UDP
+// socket isn't rebuilt on a live settings change, so edit configs/settings.json
+// and restart the daemon to move OSC ports.
+let settings = loadSettings()
+
+// --- OSC transport (defaults: in 57121, out 57120; configurable via configs/settings.json → osc) ---
+const osc = createOsc({ localPort: settings.osc.inPort, remotePort: settings.osc.outPort })
 osc.send("/twister/out/hello")
 
 // ---- Base context (resolution must be a literal 128|256|512) ----
@@ -175,91 +289,7 @@ const SLOT_COLOR: Record<Slot, number> = {
 	7: 20, // magenta-ish
 }
 
-const SETTINGS_CONFIG_PATH = resolvePath(process.cwd(), "configs/settings.json")
 const UI_INDEX_PATH = resolvePath(process.cwd(), "web/index.html")
-
-type Settings = {
-	interaction: {
-		mainDoubleClickMs: number
-		mainHoldThresholdMs: number
-		debounceMs: number
-	}
-	render: {
-		fps: number
-	}
-}
-
-const DEFAULT_SETTINGS: Settings = {
-	interaction: {
-		mainDoubleClickMs: 320,
-		mainHoldThresholdMs: 200,
-		debounceMs: 20,
-	},
-	render: {
-		fps: 30,
-	},
-}
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null && !Array.isArray(value)
-
-// Load interaction timing overrides, tolerating missing or malformed files.
-const loadSettings = (): Settings => {
-	let parsed: unknown
-	try {
-		const raw = readFileSync(SETTINGS_CONFIG_PATH, "utf8")
-		parsed = JSON.parse(raw)
-	} catch (err) {
-		const code = (err as NodeJS.ErrnoException)?.code
-		if (code && code !== "ENOENT") {
-			console.warn("[Settings] Failed to read configs/settings.json:", err)
-		}
-		return { ...DEFAULT_SETTINGS }
-	}
-
-	if (!isRecord(parsed)) return { ...DEFAULT_SETTINGS }
-
-	const interactionNode = isRecord(parsed.interaction)
-		? (parsed.interaction as Record<string, unknown>)
-		: {}
-	const renderNode = isRecord(parsed.render)
-		? (parsed.render as Record<string, unknown>)
-		: {}
-
-	const cleanNumber = (value: unknown, fallback: number) => {
-		if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-			return value
-		}
-		if (typeof value === "bigint" && value > 0n) {
-			return Number(value)
-		}
-		return fallback
-	}
-
-	return {
-		interaction: {
-			mainDoubleClickMs: cleanNumber(
-				interactionNode.mainDoubleClickMs,
-				DEFAULT_SETTINGS.interaction.mainDoubleClickMs
-			),
-			mainHoldThresholdMs: cleanNumber(
-				interactionNode.mainHoldThresholdMs,
-				DEFAULT_SETTINGS.interaction.mainHoldThresholdMs
-			),
-			debounceMs: cleanNumber(
-				interactionNode.debounceMs,
-				DEFAULT_SETTINGS.interaction.debounceMs
-			),
-		},
-		render: {
-			fps: clamp(
-				cleanNumber(renderNode.fps, DEFAULT_SETTINGS.render.fps),
-				1,
-				120
-			),
-		},
-	}
-}
 
 // Build per-slot page factories from a SystemConfig. Shared by boot and live
 // preset apply, so the same sanitize→factory path runs everywhere.
@@ -317,9 +347,6 @@ const allowBasicOnlyRoute = (slot: Slot, subPath: string): boolean => {
 	)
 	return false
 }
-
-// Mutable so the Global Settings UI can retune timings/fps live (read at use sites).
-let settings = loadSettings()
 
 const parseSlotLabel = (value: unknown): Slot | undefined => {
 	if (typeof value !== "string") return undefined
@@ -671,6 +698,7 @@ function setSettingsKey(key: string, rawValue: unknown) {
 	const next: Settings = {
 		interaction: { ...settings.interaction },
 		render: { ...settings.render },
+		osc: { ...settings.osc },
 	}
 	switch (key) {
 		case "mainDoubleClickMs":
@@ -681,6 +709,8 @@ function setSettingsKey(key: string, rawValue: unknown) {
 		case "fps":
 			next.render.fps = clamp(Math.round(value), 1, 120)
 			break
+		// osc.inPort/outPort are intentionally not live-settable here — the UDP
+		// socket is bound once at boot; see the note by loadSettings().
 		default:
 			return
 	}
@@ -877,7 +907,7 @@ if (uiEnabled) {
 	})
 }
 
-console.log("Daemon up: MIDI+OSC live. In: 57121  Out: 57120")
+console.log(`Daemon up: MIDI+OSC live. In: ${settings.osc.inPort}  Out: ${settings.osc.outPort}`)
 console.log(
 	"Try: focus → /twister/in/focus/page a   | set → /twister/in/page/a/index/0/set 0.5"
 )
