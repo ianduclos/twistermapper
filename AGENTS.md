@@ -1,7 +1,8 @@
 # Agent guide — twistermapper
 
-For coding agents that aren't Claude Code — currently **Codex** (backup
-bench). Claude Code is the primary architecture/coding environment.
+For coding agents that aren't Claude Code — currently **Kimi Code** (second
+bench, since 2026-08-05); Codex before it. Claude Code is the primary
+architecture/coding environment.
 
 **Read `HANDOFF.md` first** — who does what, session protocol, current state.
 
