@@ -10,10 +10,3 @@ dist/
 # Logs
 *.log
 graphify-out/
-
-# Agent harness docs — local working files, not part of the published project
-AGENTS.md
-CLAUDE.md
-GEMINI.md
-HANDOFF.md
-STATUS.md
