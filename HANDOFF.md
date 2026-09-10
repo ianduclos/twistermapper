@@ -54,6 +54,8 @@ and factual.
 ---
 
 ## Current state
+- **Prototype:** `Hotelier` copies Gestures, available in source via UI/OSC page
+  selection; not assigned to a slot or deployed. See `docs/gestures-osc.md`.
 - **Run:** `npm run dev` (daemon; needs the MFT), `-- --ui` for the web UI,
   `-- --fake` for the virtual Twister (no hardware). `npm test` ·
   `npx tsc --noEmit` · `npm run build`. Diagnostics: `probe`, `raw:probe`,
@@ -69,6 +71,18 @@ and factual.
 ---
 
 ## Session log (newest first)
+### 2026-09-10 — Codex
+Added `HotelierPage` as an independent copy of GesturePage, registered as
+`Hotelier` in the factory and web UI selector. No slot assignment changed.
+Documented the prototype in `src/Architecture.md` and the Gestures OSC
+contract/unused shifts in `docs/gestures-osc.md`.
+- **Verified?** `npx tsc --noEmit` clean; 32/32 tests green; copy diff reviewed.
+  Hardware, Max, and web UI behavior are ready for Ian to check, not live-tested.
+- **Deployment:** no build or agent restart; running `dist/` is unchanged.
+- **Next:** choose a Hotelier slot and specify gig-specific controls.
+- **Gotcha:** imported `~/.Codex/HOST.md` was absent; cross-project feed location
+  could not be resolved. Changes stay within this repo.
+
 ### 2026-07-19 — Claude
 Added `BlankPage` (inert no-op, LEDs off — `src/pages/blank.ts`, registered in
 `PAGE_FACTORIES`) and moved OSC in/out UDP ports from hardcoded 57121/57120

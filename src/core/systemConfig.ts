@@ -15,6 +15,7 @@
 
 import { BasicPage, type BasicPageConfig } from "../pages/basic.js"
 import { BlankPage } from "../pages/blank.js"
+import { HotelierPage } from "../pages/hotelier.js"
 import { GesturePage } from "../pages/gestures.js"
 import { MorphPage } from "../pages/morph.js"
 import { StepSeqPage, type StepSeqConfig } from "../pages/stepSeq.js"
@@ -55,6 +56,7 @@ export const PAGE_FACTORIES: Record<string, PageFactory> = {
 	Basic: (config?: unknown) => BasicPage(config as BasicPageConfig | undefined),
 	Blank: () => BlankPage(),
 	Gesture: () => GesturePage(),
+	Hotelier: () => HotelierPage(),
 	Morph: () => MorphPage(),
 	StepSeq: (config?: unknown) => StepSeqPage(config as StepSeqConfig | undefined),
 }

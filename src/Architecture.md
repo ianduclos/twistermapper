@@ -2,7 +2,7 @@ Overview (human-readable)
 
 This project is a headless Node.js “brain” for the MIDI Fighter Twister (MFT). It does three big things: 1. Decouples input from feedback. We treat encoder turns as relative deltas and render LEDs from our own virtual page state, not from the device firmware’s built-ins. That lets us build features like multiple “pages,” record/playback gestures, and visual overlays. 2. Owns the LEDs with a renderer + rate limits. We keep a cached “last sent” LED frame per encoder and diff to the new desired frame. A LedReconciler sends only what changed, in the right order, under strict burst and rolling caps so the Twister stays happy. Animations (e.g., pulse) are handled carefully to avoid clobbering brightness. 3. Speaks OSC to the DAW/Max world. Page changes and value changes go out over OSC as normalized floats; pages can also receive OSC to set values. We use simple, routable paths (e.g., /twister/out/page/a/index/1/value 0.92). There’s no GUI; the app is meant to sit between the Twister and your audio software.
 
-We currently ship five page prototypes: BasicPage (16 normalized values with selectable press modes), GesturePage (per-encoder record→playback looper with proper loop wrap and “silence at end” recording), StepSeqPage (clocked 4-track step sequencer), MorphPage (scene morph with a dissolving phantom snapshot), and BlankPage (inert placeholder — ignores all input, LEDs stay dark; for slots not in use yet). A Main overlay uses the side buttons to temporarily focus an index-selection page that highlights page slots and lets you switch focus with encoder presses. On boot we run a short boot splash (frames of LED color/brightness) to “warm” the hardware and then immediately paint the focused page twice to settle brightness deterministically.
+We currently ship six page prototypes: BasicPage (16 normalized values with selectable press modes), GesturePage (per-encoder record→playback looper with proper loop wrap and “silence at end” recording), StepSeqPage (clocked 4-track step sequencer), MorphPage (scene morph with a dissolving phantom snapshot), HotelierPage (gig-specific copy of GesturePage), and BlankPage (inert placeholder — ignores all input, LEDs stay dark; for slots not in use yet). A Main overlay uses the side buttons to temporarily focus an index-selection page that highlights page slots and lets you switch focus with encoder presses. On boot we run a short boot splash (frames of LED color/brightness) to “warm” the hardware and then immediately paint the focused page twice to settle brightness deterministically.
 
 ⸻
 
@@ -77,7 +77,7 @@ In (presets & global settings):
 • /twister/in/preset/save <name> → snapshot the live interface (soft capture: structural config — page per slot, palette/brightness, clock routing — NOT knob/step values) to configs/presets/<name>.json and mark it active.
 • /twister/in/preset/load <name> → apply a saved preset live (reloads all slots) and persist it to slots.json.
 • /twister/in/preset/delete <name> → delete configs/presets/<name>.json.
-• /twister/in/slot/<slot>/page <PageName> → reassign one slot's page live (Basic|Blank|Gesture|Morph|StepSeq); persists to slots.json and clears the active-preset marker.
+• /twister/in/slot/<slot>/page <PageName> → reassign one slot's page live (Basic|Blank|Gesture|Hotelier|Morph|StepSeq); persists to slots.json and clears the active-preset marker.
 • /twister/in/settings/get → request current global settings (replies /twister/out/settings).
 • /twister/in/settings/set <key> <value> → set one global setting live (keys: mainDoubleClickMs|mainHoldThresholdMs|debounceMs|fps); persists to settings.json; an fps change rebuilds the render loop. osc.inPort/osc.outPort are NOT live-settable here — see settings.json note below.
 • Names are restricted to [A-Za-z0-9 _-]{1,48} (safe filename; maps cleanly to a Max patch name later).
@@ -142,6 +142,12 @@ GesturePage (record / playback looper)
 • OSC out dedupes per encoder against the last-sent 5-decimal value, so flat/held loop segments don't re-emit every tick.
 • OSC in: only accept /set in standby (external param control, clamp 0..1, no rounding); reject in record/playback.
 • Keeps timers running off-focus; only LEDs for the focused page are sent.
+
+HotelierPage (gig-specific prototype)
+• Independent copy of GesturePage in `src/pages/hotelier.ts`; initially identical controls, recording, playback, and OSC value/set behavior.
+• Registered as `Hotelier`, selectable through the web UI or `/twister/in/slot/<slot>/page Hotelier`; announces type `Hotelier`. No slot is assigned by default.
+• Neither Gesture nor Hotelier currently assigns shift-specific behavior; shifted encoder input follows normal behavior.
+• Full Gesture OSC contract: `docs/gestures-osc.md` (also applies to Hotelier, except the type string).
 
 StepSeqPage (clocked 4-track sequencer)
 • Four tracks (encoders 0–3) each with 12 steps, individual playhead, loop start/end, and per-step probability.
