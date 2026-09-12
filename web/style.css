@@ -1,185 +1,425 @@
-/* Twister Manager — web UI styles.
+/* twister — web UI styles.
  * Served straight from web/ by controlServer.ts; no build step.
  *
- * Colour comes from Flexoki (kepano/flexoki, MIT) — flexoki.css holds the raw
- * scale verbatim, and the roles below are kepano's published dark mapping:
- * black/950 for grounds, 900/850 for surfaces and lines, 200 for text, 500 for
- * muted text, and the 400-level accents that are meant for dark backgrounds.
+ * Colour is Flexoki (kepano/flexoki, MIT). flexoki.css holds the raw scale
+ * verbatim; the roles below are kepano's published dark mapping — black for the
+ * chassis, 950 for the faceplate, 900/850 for controls and lines, 200 for text,
+ * 400 for secondary text, and the 400-level accents meant for dark grounds.
+ *
+ * The page has two materials, not one. The instrument is a single machined
+ * plate; everything else is a legend over a hairline rule with no box at all.
+ * That difference is the whole hierarchy — resist giving the utility panes
+ * their borders back.
  */
 
 @import url("flexoki.css");
 
 :root {
-	--bg:     var(--flexoki-black);
-	--bg-2:   var(--flexoki-950);
-	--panel:  var(--flexoki-950);
-	--ui:     var(--flexoki-900);
-	--ui-2:   var(--flexoki-850);
-	--line:   var(--flexoki-850);
-	--line-2: var(--flexoki-800);
-	--txt:    var(--flexoki-200);
-	--mut:    var(--flexoki-500);
-	--faint:  var(--flexoki-700);
-	--acc:    var(--flexoki-blue-400);
-	--ok:     var(--flexoki-green-400);
-	--warn:   var(--flexoki-yellow-400);
-	--bad:    var(--flexoki-red-400);
+	/* Surfaces */
+	--chassis: var(--flexoki-black);
+	--plate:   var(--flexoki-950);
+	--ui:      var(--flexoki-900);
+	--ui-2:    var(--flexoki-850);
+	--line:    var(--flexoki-850);
+	--line-2:  var(--flexoki-800);
+
+	/* Text — 400 for secondary, not 500: 500 on the plate falls under 4.5:1. */
+	--txt:   var(--flexoki-200);
+	--txt-2: var(--flexoki-400);
+	--txt-3: var(--flexoki-500);
+
+	/* Accents, used semantically rather than one blue for everything. */
+	--c-blue:    var(--flexoki-blue-400);
+	--c-green:   var(--flexoki-green-400);
+	--c-yellow:  var(--flexoki-yellow-400);
+	--c-red:     var(--flexoki-red-400);
+	--c-purple:  var(--flexoki-purple-400);
+	--c-cyan:    var(--flexoki-cyan-400);
+	--c-orange:  var(--flexoki-orange-400);
+
+	/* Rounded reads as moulded panel lettering rather than admin-panel sans,
+	   and both stacks are system faces — the page must work offline. */
+	--sans: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif;
+	--mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+
+	--r-sm: 6px;
+	--r-md: 10px;
+	--r-lg: 16px;
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
 body {
-	margin: 0; background: var(--bg); color: var(--txt);
-	font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif;
-}
-header {
-	display: flex; align-items: center; gap: 12px;
-	padding: 12px 18px; border-bottom: 1px solid var(--line);
-}
-header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .3px; }
-#status { margin-left: auto; font-size: 12px; color: var(--mut); display: flex; align-items: center; gap: 6px; }
-#dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); }
-#dot.on { background: var(--ok); }
-main {
-	display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 16px; padding: 18px; max-width: 1180px; width: 100%;
-}
-@media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } }
-/* Grid items default to min-width:auto, which refuses to shrink below their
-   content and pushes the whole page wider than the viewport. */
-.panel { min-width: 0; }
-/* A range input carries an intrinsic width that outgrows a narrow column. */
-input[type=range] { flex: 1 1 80px; min-width: 0; }
-.tabs { display: flex; gap: 2px; padding: 0 18px; border-bottom: 1px solid var(--line); }
-.tabs button { background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0; color: var(--mut); padding: 10px 14px; cursor: pointer; font: inherit; }
-.tabs button:hover { color: var(--txt); }
-.tabs button.active { color: var(--txt); border-bottom-color: var(--acc); }
-main.tab { display: none; }
-main.tab.active { display: grid; }
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
-.panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--mut); margin: 0 0 14px; }
-.row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
-label { color: var(--mut); font-size: 12px; min-width: 64px; }
-input[type=number], select, input[type=text] {
-	background: var(--ui); color: var(--txt); border: 1px solid var(--line-2);
-	border-radius: 6px; padding: 6px 8px; font: inherit; width: 84px;
-}
-input[type=text] { width: auto; }
-input[type=number]:focus-visible, select:focus-visible, input[type=text]:focus-visible {
-	outline: none; border-color: var(--acc);
-}
-input[type=range] { flex: 1; accent-color: var(--acc); }
-button {
-	background: var(--ui-2); color: var(--txt); border: 1px solid var(--line-2);
-	border-radius: 6px; padding: 8px 12px; font: inherit; cursor: pointer;
-}
-button:hover { border-color: var(--acc); }
-button.primary { background: var(--acc); color: var(--flexoki-black); border-color: var(--acc); font-weight: 600; }
-button.playing { background: var(--bad); border-color: var(--bad); color: var(--flexoki-black); }
-.focusgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-.slot {
-	text-align: center; padding: 10px 6px; border-radius: 8px; cursor: pointer;
-	background: var(--ui); border: 1px solid var(--line);
-}
-.slot:hover { border-color: var(--acc); }
-.slot.focused { border-color: var(--acc); background: var(--ui-2); }
-.slot .l { font-size: 17px; font-weight: 700; }
-.slot .t { font-size: 10px; color: var(--mut); text-transform: uppercase; letter-spacing: .5px; min-height: 12px; }
-#pulseLed { width: 12px; height: 12px; border-radius: 50%; background: var(--line-2); transition: background .04s; }
-#pulseLed.flash { background: var(--warn); }
-.values { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; max-width: 360px; }
-.cell { background: var(--ui); border: 1px solid var(--line); border-radius: 5px; height: 56px; position: relative; overflow: hidden; }
-.cell .bar { position: absolute; bottom: 0; left: 0; right: 0; background: var(--acc); opacity: .8; }
-.cell .n { position: absolute; top: 2px; left: 4px; font-size: 9px; color: var(--mut); }
-#log { font-family: ui-monospace, monospace; font-size: 11px; color: var(--mut); height: 150px; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; white-space: pre-wrap; }
-.hint { font-size: 11px; color: var(--mut); margin-top: 4px; }
-.span2 { grid-column: 1 / -1; }
-.layoutgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-.lcell { display: flex; flex-direction: column; gap: 4px; }
-.llab { font-size: 11px; font-weight: 700; color: var(--mut); text-align: center; }
-.lcell select { width: 100%; }
-.prow { gap: 8px; margin-bottom: 8px; }
-.prow .pname { flex: 1; }
-.prow .pname.active { color: var(--ok); font-weight: 600; }
-.chk { display: inline-flex; align-items: center; gap: 5px; min-width: auto; cursor: pointer; }
-.chk input { accent-color: var(--acc); margin: 0; }
-kbd {
-	font: 11px/1 ui-monospace, monospace; background: var(--ui); color: var(--txt);
-	border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 4px;
-	padding: 1px 4px; margin: 0 1px;
+	margin: 0;
+	background: var(--chassis);
+	color: var(--txt);
+	font: 13px/1.5 var(--sans);
+	-webkit-font-smoothing: antialiased;
 }
 
-/* --- Virtual Twister ----------------------------------------------------- */
-.vtwister-row { display: flex; align-items: center; justify-content: center; gap: 18px; }
-.vtwister-side { display: flex; flex-direction: column; gap: 10px; flex: 0 0 auto; }
-.vtside-btn { font-size: 11px; padding: 8px 6px; min-width: 72px; text-align: center; user-select: none; }
-.vtside-btn.active { background: var(--acc); color: var(--flexoki-black); border-color: var(--acc); font-weight: 600; }
-.vtwister-grid {
-	display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
-	gap: 8px; flex: 0 1 auto; width: min(100%, 420px);
+/* Every live number is monospaced and tabular, so it twitches in place instead
+   of reflowing the row around it. */
+.readout, #log, kbd, code, input[type=number], .vt-readout, .slot .t {
+	font-family: var(--mono);
+	font-variant-numeric: tabular-nums;
 }
+
+:focus-visible {
+	outline: 2px solid var(--c-blue);
+	outline-offset: 2px;
+	border-radius: var(--r-sm);
+}
+
+/* --- Header -------------------------------------------------------------- */
+.bar {
+	display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+	padding: 10px 20px;
+	border-bottom: 1px solid var(--line);
+	background: var(--chassis);
+}
+.brand {
+	font-size: 16px; font-weight: 600; letter-spacing: -.01em;
+	color: var(--txt);
+}
+.slotchip {
+	font: 500 11px/1 var(--mono);
+	color: var(--txt-2);
+	background: var(--ui);
+	border: 1px solid var(--line-2);
+	border-radius: 999px;
+	padding: 5px 9px;
+	white-space: nowrap;
+}
+.tabs { display: flex; gap: 4px; margin-left: auto; }
+.tabs button {
+	background: transparent; border: 1px solid transparent; border-radius: 999px;
+	color: var(--txt-2); padding: 6px 14px; cursor: pointer; font: inherit;
+}
+.tabs button:hover { color: var(--txt); }
+.tabs button.active { color: var(--txt); background: var(--ui); border-color: var(--line-2); }
+#status { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--txt-2); }
+#dot {
+	width: 8px; height: 8px; border-radius: 50%;
+	background: var(--c-red); box-shadow: 0 0 6px -1px var(--c-red);
+}
+#dot.on { background: var(--c-green); box-shadow: 0 0 6px -1px var(--c-green); }
+
+/* --- Page grid ----------------------------------------------------------- */
+main.tab { display: none; }
+main.tab.active {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 300px;
+	align-items: start;
+	gap: 22px 26px;
+	max-width: 1020px;
+	margin-inline: auto;      /* was missing: the page hugged the left edge */
+	padding: 22px 20px 40px;
+}
+.deck { grid-column: 1; min-width: 0; }
+.deck > .help { max-width: 46em; }
+.rail { grid-column: 2; min-width: 0; display: flex; flex-direction: column; gap: 22px; }
+.logwrap { grid-column: 1 / -1; }
+
+#tab-setup.active {
+	grid-template-columns: minmax(0, 1fr);
+	max-width: 680px;
+}
+
+/* --- Panes: a legend over a rule, no box --------------------------------- */
+.pane { min-width: 0; }
+.pane h2 {
+	display: flex; align-items: center; gap: 8px;
+	margin: 0 0 12px;
+	padding-bottom: 7px;
+	border-bottom: 1px solid var(--line);
+	font-size: 12px; font-weight: 600; color: var(--txt-2);
+}
+.help { margin: 10px 0 0; font-size: 11px; line-height: 1.55; color: var(--txt-2); }
+code { font-size: 11px; color: var(--txt); }
+
+/* --- Controls ------------------------------------------------------------ */
+.field { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; flex-wrap: wrap; }
+.field > label { flex: 0 0 74px; font-size: 12px; color: var(--txt-2); }
+.unit { font-size: 11px; color: var(--txt-3); }
+
+input[type=number], input[type=text], select {
+	background: var(--ui); color: var(--txt);
+	border: 1px solid var(--line-2); border-radius: var(--r-sm);
+	padding: 7px 9px; font: inherit; min-width: 0;
+}
+input[type=number] { width: 72px; }
+input[type=text] { flex: 1 1 140px; max-width: 260px; }
+select { flex: 0 1 auto; max-width: 200px; font-size: 12px; }
+input:hover, select:hover { border-color: var(--flexoki-700); }
+
+/* The browser default paints the whole track with accent-color, so a range at
+   0 read as 100%. Draw the track and thumb explicitly instead. */
+input[type=range] {
+	-webkit-appearance: none; appearance: none;
+	flex: 1 1 80px; min-width: 0; height: 18px; background: transparent; cursor: pointer;
+}
+input[type=range]::-webkit-slider-runnable-track {
+	height: 3px; border-radius: 2px; background: var(--line-2);
+}
+input[type=range]::-moz-range-track { height: 3px; border-radius: 2px; background: var(--line-2); }
+input[type=range]::-webkit-slider-thumb {
+	-webkit-appearance: none; width: 13px; height: 13px; margin-top: -5px;
+	border-radius: 50%; background: var(--txt); border: none;
+}
+input[type=range]::-moz-range-thumb {
+	width: 13px; height: 13px; border-radius: 50%; background: var(--txt); border: none;
+}
+
+button {
+	background: var(--ui); color: var(--txt);
+	border: 1px solid var(--line-2); border-radius: var(--r-sm);
+	padding: 8px 13px; font: inherit; cursor: pointer;
+	transition: background .1s, border-color .1s;
+}
+button:hover { background: var(--ui-2); border-color: var(--flexoki-700); }
+button.primary {
+	background: var(--c-blue); border-color: var(--c-blue);
+	color: var(--flexoki-black); font-weight: 600;
+}
+button.primary:hover { background: var(--flexoki-blue-300); border-color: var(--flexoki-blue-300); }
+.chk { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 11px; color: var(--txt-2); }
+.chk input { accent-color: var(--c-blue); margin: 0; }
+kbd {
+	font-size: 10px; background: var(--ui); color: var(--txt);
+	border: 1px solid var(--line-2); border-bottom-width: 2px;
+	border-radius: 4px; padding: 1px 4px;
+}
+
+/* --- The instrument ------------------------------------------------------ */
+/* Sixteen encoders on one machined plate. The inset paper hairline along the
+   top is the milled edge catching the light; it is the only ornament here. */
+.plate {
+	position: relative;
+	display: flex; align-items: center; justify-content: center;
+	gap: 14px; padding: 14px;
+	/* Shrink-wrapped: the plate ends where the instrument ends. */
+	width: max-content; max-width: 100%; margin-inline: auto;
+	background: var(--plate);
+	border: 1px solid var(--line);
+	border-radius: var(--r-lg);
+	box-shadow: inset 0 1px 0 rgb(255 252 240 / .045), 0 1px 3px rgb(0 0 0 / .45);
+}
+/* A held shift changes what every turn means. The plate itself says so. */
+.plate::before {
+	content: ""; position: absolute; inset: 0;
+	border-radius: inherit; border: 1px solid transparent;
+	pointer-events: none; transition: border-color .12s;
+}
+.plate.armed::before { border-color: var(--c-yellow); }
+
+.grid {
+	display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 6px; flex: 0 1 auto; min-width: 0; width: 432px; max-width: 100%;
+}
+.bank { display: flex; flex-direction: column; gap: 10px; flex: 0 0 auto; }
+.bank-btn {
+	position: relative;
+	display: flex; align-items: center; justify-content: center; gap: 6px;
+	min-width: 78px; min-height: 44px; padding: 8px;
+	font: 500 11px/1 var(--mono); color: var(--txt-2);
+	background: var(--ui); border-color: var(--line);
+	-webkit-user-select: none; user-select: none;
+}
+/* A sticky toggle carries a state lamp; a momentary button does not. Nothing
+   but a tooltip used to distinguish them. */
+.bank-btn.sticky i {
+	width: 6px; height: 6px; border-radius: 50%;
+	background: var(--line-2); transition: background .1s, box-shadow .1s;
+}
+.bank-btn.active {
+	color: var(--flexoki-black); font-weight: 600;
+	background: var(--c-yellow); border-color: var(--c-yellow);
+}
+.bank-btn.active i { background: var(--flexoki-black); box-shadow: none; }
+#vtGlobalL.active, #vtMainR.active { background: var(--c-blue); border-color: var(--c-blue); }
+
 .vtenc {
-	background: var(--ui); border: 1px solid var(--line); border-radius: 10px;
-	cursor: ns-resize; transition: border-color .08s, background .08s;
+	border-radius: var(--r-md);
+	cursor: ns-resize;
+	background: transparent;
+	transition: background .1s;
 	-webkit-user-select: none; user-select: none; touch-action: none;
 }
 .vtenc svg { display: block; width: 100%; height: auto; }
-.vtenc .vt-ring-bg { fill: none; stroke: var(--line-2); stroke-width: 10; stroke-linecap: round; }
-.vtenc .vt-ring-val { fill: none; stroke: var(--acc); stroke-width: 10; stroke-linecap: round; }
-.vtenc .vt-label { fill: var(--faint); font-size: 9px; text-anchor: middle; pointer-events: none; }
-
-/* The whole cell is the hit target; the zone under the pointer decides whether
-   it acts as a knob or a button, so the cursor follows the pointer rather than
-   sitting on one child element. */
+.vtenc:hover { background: rgb(255 252 240 / .03); }
 .vtenc.over-center { cursor: pointer; }
-.vtenc:hover { border-color: var(--line-2); }
-.vtenc:focus-visible { outline: none; border-color: var(--acc); box-shadow: 0 0 0 2px rgb(67 133 190 / .3); }
-.vtenc.dragging { border-color: var(--acc); background: var(--ui-2); }
-.vtenc .vt-center { transition: transform .06s ease-out; }
-.vtenc.pressed .vt-center { transform: scale(.88); transform-origin: 50% 50%; }
+.vtenc.dragging { background: rgb(255 252 240 / .05); }
+.vtenc:focus-visible { outline-offset: -2px; }
+
+.vtenc .vt-ring-bg { fill: none; stroke: var(--flexoki-850); stroke-width: 5.5; stroke-linecap: butt; }
+/* butt, not round: a round cap painted a dot on every encoder sitting at 0. */
+.vtenc .vt-ring-val { fill: none; stroke-width: 5.5; stroke-linecap: butt; }
+.vtenc .vt-gloss { fill: var(--flexoki-paper); opacity: .05; pointer-events: none; }
+.vtenc .vt-index { fill: var(--txt-3); font: 9px var(--mono); }
 .vtenc .vt-readout {
-	fill: var(--txt); font-size: 15px; font-weight: 600; text-anchor: middle;
-	pointer-events: none; opacity: 0; transition: opacity .12s;
-	font-variant-numeric: tabular-nums;
+	fill: var(--txt); font: 600 13px var(--mono); text-anchor: middle;
+	font-variant-numeric: tabular-nums; pointer-events: none;
 }
-.vtenc:hover .vt-readout, .vtenc.dragging .vt-readout, .vtenc:focus-visible .vt-readout { opacity: .92; }
+
+/* An LED emits; it does not fill a shape. The cap is the die, the bloom is the
+   light escaping around it, and ledBrightness drives both. */
+.vtenc .vt-bloom, .vtenc .vt-cap { transition: opacity .08s, transform .08s ease-out; }
+.vtenc .vt-cap, .vtenc .vt-bloom { transform-origin: 50% 50%; }
+.vtenc.pressed .vt-cap { transform: scale(.84); }
+.vtenc.pressed .vt-bloom { transform: scale(.7); }
 
 /* The device's pulse is an animation *mode* the page turns on, not a per-beat
    trigger, so mirroring it as a running animation while the flag is set is the
    honest reading. True phase sync would need a timestamp on the wire. */
-.vtenc .vt-center.vt-pulse { animation: vtPulse 0.6s ease-in-out infinite; }
+.vtenc .vt-bloom.vt-pulse { animation: vtPulse 0.7s ease-in-out infinite; }
 @keyframes vtPulse {
-	0%, 100% { fill-opacity: 1; }
-	50% { fill-opacity: 0.35; }
+	0%, 100% { transform: scale(1); }
+	50%      { transform: scale(.72); opacity: .25; }
 }
 
-/* A sticky shift changes what every turn means — make that hard to miss. */
-.vtwister-grid.shifted { outline: 1px solid var(--warn); outline-offset: 7px; border-radius: 12px; }
+/* With --fake the grid is the only way to play the thing, so give it room. */
+body.fake-mode .grid { width: 520px; gap: 8px; }
 
-/* --- Fake mode: the grid *is* the instrument, so it leads ---------------- */
-/* With hardware attached the grid is a mirror and stays a secondary panel;
-   with --fake it is the only way to play the thing. */
-body.fake-mode #vtPanel { order: -1; }
-body.fake-mode #vtPanel .vtwister-grid { width: min(100%, 560px); gap: 12px; }
-body.fake-mode #vtPanel .vtenc { border-radius: 12px; }
-body.fake-mode #vtPanel .vtside-btn { min-width: 86px; padding: 12px 8px; }
-body.fake-mode #vtPanel .vt-readout { font-size: 13px; }
+/* --- Rail: pages --------------------------------------------------------- */
+.slots { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.slot {
+	position: relative;
+	display: flex; flex-direction: column; align-items: center; justify-content: center;
+	gap: 2px; min-height: 46px; padding: 7px 4px 7px 7px;
+	background: var(--ui); border: 1px solid var(--line); border-radius: var(--r-sm);
+	cursor: pointer; overflow: hidden;
+	transition: background .1s, border-color .1s;
+}
+/* The colour bar keys the slot to its page type, so a slot is identifiable
+   without reading the label. */
+.slot::before {
+	content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+	background: var(--slot-hue, var(--flexoki-700));
+}
+.slot[data-type="Basic"]    { --slot-hue: var(--c-purple); }
+.slot[data-type="Gesture"]  { --slot-hue: var(--c-green); }
+.slot[data-type="Hotelier"] { --slot-hue: var(--c-orange); }
+.slot[data-type="Morph"]    { --slot-hue: var(--c-cyan); }
+.slot[data-type="StepSeq"]  { --slot-hue: var(--c-yellow); }
+.slot[data-type="Blank"]    { --slot-hue: var(--flexoki-700); }
+.slot:hover { background: var(--ui-2); }
+.slot.focused { border-color: var(--c-blue); background: var(--ui-2); }
+.slot .l { font-size: 15px; font-weight: 600; line-height: 1; }
+.slot .t { font-size: 9px; color: var(--txt-2); line-height: 1; }
+
+/* --- Rail: values -------------------------------------------------------- */
+/* Kept deliberately cheap in space. It earns its place on pages whose value
+   count does not map onto the 4x4 matrix — which the old fixed 16-cell grid
+   never actually handled. */
+.ticks {
+	display: flex; align-items: stretch; gap: 2px;
+	height: 36px; border-bottom: 1px solid var(--line-2);
+}
+.tick {
+	flex: 1 1 0; min-width: 0; border-radius: 1px 1px 0 0;
+	background: linear-gradient(to top, var(--txt-3) var(--v, 0%), var(--flexoki-900) var(--v, 0%));
+}
+
+/* --- Rail: pulse --------------------------------------------------------- */
+.transport { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.play {
+	display: grid; place-items: center;
+	width: 44px; height: 44px; padding: 0; border-radius: 50%;
+	background: var(--c-blue); border-color: var(--c-blue);
+}
+.play:hover { background: var(--flexoki-blue-300); border-color: var(--flexoki-blue-300); }
+.play .glyph {
+	width: 0; height: 0;
+	border-left: 12px solid var(--flexoki-black);
+	border-top: 8px solid transparent; border-bottom: 8px solid transparent;
+	margin-left: 3px;
+}
+.play.playing { background: var(--c-red); border-color: var(--c-red); }
+.play.playing:hover { background: var(--flexoki-red-300); border-color: var(--flexoki-red-300); }
+.play.playing .glyph {
+	width: 12px; height: 12px; margin-left: 0; border: none;
+	background: var(--flexoki-black);
+}
+/* Same light language as the encoders: an indicator lamp, not a filled dot. */
+.lamp {
+	width: 11px; height: 11px; border-radius: 50%;
+	background: var(--line-2); transition: background .05s, box-shadow .05s;
+}
+.lamp.flash { background: var(--c-yellow); box-shadow: 0 0 9px -1px var(--c-yellow); }
+.transport .readout { font-size: 12px; color: var(--txt-2); }
+
+/* --- Message log --------------------------------------------------------- */
+.logwrap { border-top: 1px solid var(--line); padding-top: 10px; }
+.logwrap > summary {
+	display: flex; align-items: center; gap: 14px;
+	list-style: none; cursor: pointer; color: var(--txt-2); font-size: 12px;
+}
+.logwrap > summary::-webkit-details-marker { display: none; }
+.sum-label { margin-right: auto; display: flex; align-items: center; gap: 7px; }
+.sum-label::before {
+	content: ""; width: 0; height: 0;
+	border-left: 5px solid currentColor;
+	border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+	transition: transform .12s;
+}
+.logwrap[open] > summary .sum-label::before { transform: rotate(90deg); }
+.logwrap > summary button { padding: 4px 10px; font-size: 11px; }
+#log {
+	margin-top: 10px; height: 190px; overflow: auto;
+	background: var(--plate); border: 1px solid var(--line); border-radius: var(--r-sm);
+	padding: 9px 11px; font-size: 11px; line-height: 1.6; color: var(--txt-2);
+	white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+/* --- Setup --------------------------------------------------------------- */
+.layout { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.lcell { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.llab { font: 600 11px/1 var(--mono); color: var(--txt-2); }
+.lcell select { width: 100%; max-width: none; }
+
+#presetList { margin-top: 4px; }
+.prow {
+	display: flex; align-items: center; gap: 8px;
+	max-width: 520px; padding: 7px 0;
+	border-bottom: 1px solid var(--line);
+}
+.prow .pname { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.prow .pname::before {
+	content: ""; width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto;
+	background: var(--line-2);
+}
+.prow .pname.active { color: var(--txt); font-weight: 600; }
+.prow .pname.active::before { background: var(--c-green); box-shadow: 0 0 7px -1px var(--c-green); }
+.prow button { padding: 5px 11px; font-size: 11px; }
+
+/* --- Narrow -------------------------------------------------------------- */
+@media (max-width: 900px) {
+	main.tab.active { grid-template-columns: minmax(0, 1fr); }
+	.deck, .rail { grid-column: 1; }
+	.rail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 26px; }
+}
+@media (max-width: 620px) {
+	.bar { padding: 10px 14px; gap: 10px; }
+	/* Wrapping left "connected" stranded on a line of its own. Put the status on
+	   the brand's row and give the tabs the second row outright. */
+	#status { order: -1; margin-left: auto; }
+	.tabs { order: 0; margin-left: 0; width: 100%; }
+	main.tab.active { padding: 16px 14px 32px; gap: 20px; }
+	.rail { grid-template-columns: minmax(0, 1fr); }
+	.layout { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	/* Two flanking banks stop fitting beside a 4-wide grid; move them above and
+	   below so the knobs stay as large as the screen allows. */
+	.plate { flex-wrap: wrap; gap: 10px; padding: 12px; }
+	.bank { flex-direction: row; width: 100%; }
+	.bank-btn { flex: 1 1 0; min-width: 0; }
+	.grid, body.fake-mode .grid { order: 1; width: 100%; max-width: none; }
+	.bank:first-of-type { order: 0; }
+	.bank:last-of-type { order: 2; }
+}
 
 @media (prefers-reduced-motion: reduce) {
-	.vtenc, .vtenc .vt-center, .vtenc .vt-readout, #pulseLed { transition: none; }
-	.vtenc .vt-center.vt-pulse { animation: none; opacity: .7; }
-}
-
-
-/* --- Narrow widths ------------------------------------------------------- */
-@media (max-width: 560px) {
-	/* Flanking side buttons stop fitting beside a 4-wide grid; move them to
-	   rows above and below, which also keeps the knobs as large as possible. */
-	.vtwister-row { flex-wrap: wrap; gap: 10px; }
-	.vtwister-side { flex-direction: row; width: 100%; justify-content: center; }
-	.vtwister-grid, body.fake-mode #vtPanel .vtwister-grid { width: 100%; order: 1; }
-	.vtwister-side:first-child { order: 0; }
-	.vtwister-side:last-child { order: 2; }
-	.vtside-btn, body.fake-mode #vtPanel .vtside-btn { flex: 1 1 0; min-width: 0; }
-	main { padding: 12px; }
-	.values { max-width: none; }
+	*, .vtenc .vt-bloom, .vtenc .vt-cap, .lamp, button { transition: none !important; }
+	.vtenc .vt-bloom.vt-pulse { animation: none; opacity: .45; }
+	.logwrap[open] > summary .sum-label::before { transition: none; }
 }

@@ -56,7 +56,7 @@ const VT_ARC_D = vtArcPath(VT_START_DEG, VT_END_DEG)
 const VT_COLOR_ANCHORS = [
 	[1, 240], [33, 180], [60, 120], [66, 60], [74, 30], [80, 0], [110, -75], [126, -115],
 ]
-export function vtColorIndexToCss(idx) {
+export function vtColorIndexToHue(idx) {
 	const c = Math.max(1, Math.min(126, Number(idx) || 1))
 	for (let i = 0; i < VT_COLOR_ANCHORS.length - 1; i++) {
 		const [i0, h0] = VT_COLOR_ANCHORS[i]
@@ -64,12 +64,20 @@ export function vtColorIndexToCss(idx) {
 		if (c >= i0 && c <= i1) {
 			const t = (c - i0) / (i1 - i0)
 			const h = h0 + (h1 - h0) * t
-			return `hsl(${((h % 360) + 360) % 360}, 100%, 55%)`
+			return ((h % 360) + 360) % 360
 		}
 	}
 	const [, hLast] = VT_COLOR_ANCHORS[VT_COLOR_ANCHORS.length - 1]
-	return `hsl(${((hLast % 360) + 360) % 360}, 100%, 55%)`
+	return ((hLast % 360) + 360) % 360
 }
+
+// Hue fidelity to the device, but pulled out of neon and into the Flexoki
+// register: full-saturation 55% lightness read as stickers against the plate.
+// The cap is the die, the bloom is the light escaping around it, and the ring
+// is the same LED — on the hardware it is not permanently blue.
+export function vtCapColor(idx) { return `hsl(${vtColorIndexToHue(idx)} 64% 54%)` }
+export function vtBloomColor(idx) { return `hsl(${vtColorIndexToHue(idx)} 72% 46%)` }
+export function vtRingColor(idx) { return `hsl(${vtColorIndexToHue(idx)} 58% 60%)` }
 
 function svgEl(tag, attrs) {
 	const el = document.createElementNS(SVG_NS, tag)
@@ -79,6 +87,7 @@ function svgEl(tag, attrs) {
 
 export function initTwister({ send }) {
 	const vtGrid = document.getElementById("vtGrid")
+	const plate = document.getElementById("plate")
 	const cells = []          // per id: { root, valuePath, centerCircle, readout }
 	const pressed = new Set() // ids currently held down (pointer or keyboard)
 
@@ -136,19 +145,26 @@ export function initTwister({ send }) {
 				class: "vt-ring-val", d: VT_ARC_D, pathLength: "1",
 				"stroke-dasharray": "0 2", "stroke-dashoffset": "0",
 			})
-			const center = svgEl("circle", { class: "vt-center", cx: 50, cy: 50, r: 22 })
-			const label = svgEl("text", { class: "vt-label", x: 50, y: 82 })
-			label.textContent = String(id)
-			const readout = svgEl("text", { class: "vt-readout", x: 50, y: 56 })
+			// Three concentric pieces approximate a lit cap without an SVG filter,
+			// which sixteen cells at 60fps cannot afford: a soft bloom behind the
+			// die, the die itself, and a fixed specular that never needs writing.
+			const bloom = svgEl("circle", { class: "vt-bloom", cx: 50, cy: 50, r: 29 })
+			const cap = svgEl("circle", { class: "vt-cap", cx: 50, cy: 50, r: 19 })
+			const gloss = svgEl("ellipse", { class: "vt-gloss", cx: 50, cy: 43, rx: 11, ry: 6.5 })
+			const index = svgEl("text", { class: "vt-index", x: 7, y: 14 })
+			index.textContent = String(id)
+			// The ring leaves a 90 degree gap at the bottom by construction. That
+			// gap is where the number lives — always on, never hover-to-know.
+			const readout = svgEl("text", { class: "vt-readout", x: 50, y: 89 })
 			readout.textContent = ""
 
-			svg.append(bg, val, center, label, readout)
+			svg.append(bg, val, bloom, cap, gloss, index, readout)
 			root.appendChild(svg)
 			// Nothing inside the cell should intercept the pointer: the cell itself
 			// is the hit target, and the zone is decided from the coordinates.
 			svg.style.pointerEvents = "none"
 			vtGrid.appendChild(root)
-			cells[id] = { root, valuePath: val, centerCircle: center, readout }
+			cells[id] = { root, valuePath: val, bloom, cap, readout }
 
 			attachPointer(root, id)
 			attachKeyboard(root, id)
@@ -257,14 +273,25 @@ export function initTwister({ send }) {
 		if (!els || !Array.isArray(tuple)) return
 		const [ring, rgb, ledBrightness, ringBrightness, pulse01] = tuple
 		const value = clampValue(ring)
+
+		// A zero-length arc with a butt cap paints nothing, which is the point:
+		// with the old round cap every encoder sitting at 0 showed a stray dot.
 		els.valuePath.setAttribute("stroke-dasharray", `${value / 127} 2`)
+		els.valuePath.setAttribute("stroke", vtRingColor(rgb))
 		els.valuePath.style.opacity = Math.max(0.05, Math.min(1, (Number(ringBrightness) || 0) / 31))
-		els.centerCircle.setAttribute("fill", vtColorIndexToCss(rgb))
-		const ledOpacity = 0.12 + (Math.max(0, Math.min(29, Number(ledBrightness) || 0)) / 29) * 0.88
-		els.centerCircle.style.fillOpacity = ledOpacity
-		els.centerCircle.classList.toggle("vt-pulse", !!pulse01)
+
+		// ledBrightness drives how much light escapes, not just how opaque a
+		// coloured disc is: an unlit encoder reads as a dark cap, not a sticker.
+		const lit = Math.max(0, Math.min(29, Number(ledBrightness) || 0)) / 29
+		els.cap.setAttribute("fill", vtCapColor(rgb))
+		els.cap.style.opacity = (0.18 + lit * 0.82).toFixed(3)
+		els.bloom.setAttribute("fill", vtBloomColor(rgb))
+		els.bloom.style.opacity = (lit * 0.22).toFixed(3)
+		els.bloom.classList.toggle("vt-pulse", !!pulse01)
+
 		els.readout.textContent = String(value)
 		els.root.setAttribute("aria-valuenow", String(value))
+		els.root.setAttribute("aria-valuetext", `Encoder ${id}, ${value}`)
 	}
 
 	// ---- Prediction + frame application -----------------------------------
@@ -371,9 +398,9 @@ export function initTwister({ send }) {
 		btn.onclick = () => {
 			down = !down
 			btn.classList.toggle("active", down)
-			// A held shift changes what every turn means; make that impossible to
-			// miss rather than leaving it to one small button's styling.
-			vtGrid.classList.toggle("shifted", anyShiftActive())
+			// A held shift changes what every turn means; the plate itself says so
+			// rather than leaving it to one small button's styling.
+			plate?.classList.toggle("armed", anyShiftActive())
 			send("/twister/ui/side/shift", side, down ? 1 : 0)
 		}
 	}

@@ -3,133 +3,148 @@
 <head>
 	<meta charset="utf-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
-	<title>Twister Manager — Control</title>
+	<title>twister</title>
 	<link rel="icon" type="image/png" href="favicon.png" />
 	<link rel="stylesheet" href="style.css" />
 </head>
 <body>
-	<header>
-		<h1>Twister Manager</h1>
+	<header class="bar">
+		<span class="brand">twister</span>
+		<span class="slotchip" id="monSlot" title="Focused slot"></span>
+		<nav class="tabs">
+			<button data-tab="tab-control" class="active">Control</button>
+			<button data-tab="tab-setup">Setup</button>
+		</nav>
 		<div id="status"><span id="dot"></span><span id="statusText">connecting…</span></div>
 	</header>
 
-	<nav class="tabs">
-		<button data-tab="tab-control" class="active">Control</button>
-		<button data-tab="tab-setup">Setup</button>
-	</nav>
-
 	<main id="tab-control" class="tab active">
-		<!-- Pulse generator -->
-		<section class="panel">
-			<h2>Pulse Generator</h2>
-			<div class="row">
-				<button id="playBtn" class="primary">▶ Play</button>
-				<div id="pulseLed"></div>
-				<span id="pulseCount" class="hint">0 pulses</span>
-			</div>
-			<div class="row">
-				<label for="bpm">BPM</label>
-				<input id="bpm" type="number" min="1" max="999" step="1" value="120" />
-				<label for="spb">Steps/beat</label>
-				<select id="spb">
-					<option value="1">1 (quarter)</option>
-					<option value="2">2 (eighth)</option>
-					<option value="4" selected>4 (sixteenth)</option>
-				</select>
-			</div>
-			<div class="row">
-				<label for="clockId">Clock id</label>
-				<select id="clockId">
-					<option value="cycle" selected>cycle 0→3</option>
-					<option value="0">fixed 0</option>
-					<option value="1">fixed 1</option>
-					<option value="2">fixed 2</option>
-					<option value="3">fixed 3</option>
-				</select>
-			</div>
-			<div class="row">
-				<label for="skip">Skip %</label>
-				<input id="skip" type="range" min="0" max="100" value="0" />
-				<span id="skipVal" class="hint">0%</span>
-			</div>
-			<div class="hint">Each pulse sends <code>/twister/in/clock &lt;id&gt;</code>. "Skip %" randomly drops pulses for irregular feel. Browser timing jitters when this tab is in the background.</div>
-		</section>
-
-		<!-- Page focus -->
-		<section class="panel">
-			<h2>Page Focus</h2>
-			<div class="focusgrid" id="focusGrid"></div>
-			<div class="hint">Click a slot to focus it (mirrors the hardware overlay).</div>
-		</section>
-
-		<!-- Live monitor -->
-		<section class="panel span2">
-			<h2>Live Monitor — <span id="monSlot">–</span></h2>
-			<div class="row" id="modeRow" style="display:none;">
-				<label style="min-width:auto;">Mode</label>
-				<select id="modeSel"></select>
-				<span class="hint">note: press = note · precision: hold = fine · recall: press recalls, L+R saves, L recalls all</span>
-			</div>
-			<div class="values" id="values"></div>
-			<div class="row" style="margin-top:14px; margin-bottom:0;">
-				<label style="min-width:auto;">Raw</label>
-				<button id="clearLog">clear</button>
-				<label class="chk"><input id="logLeds" type="checkbox" /> log LED frames</label>
-			</div>
-			<div id="log"></div>
-		</section>
-
-		<!-- Virtual Twister: 4x4 encoder grid mirroring the device, drives input back -->
-		<section class="panel span2" id="vtPanel">
-			<h2>Virtual Twister</h2>
-			<div class="vtwister-row">
-				<div class="vtwister-side">
-					<button id="vtShiftL" class="vtside-btn" title="Shift Left (sticky toggle)">Shift L</button>
-					<button id="vtGlobalL" class="vtside-btn" title="Global Left (momentary)">Global L</button>
+		<!-- The instrument. One plate, sixteen encoders, the side buttons where
+		     the hardware puts them. -->
+		<section class="deck">
+			<div class="plate" id="plate">
+				<div class="bank">
+					<button id="vtShiftL" class="bank-btn sticky" title="Shift Left — sticky toggle; held shift changes what every turn means"><i></i>Shift L</button>
+					<button id="vtGlobalL" class="bank-btn" title="Global Left — momentary, held only while pressed">Global L</button>
 				</div>
-				<div class="vtwister-grid" id="vtGrid"></div>
-				<div class="vtwister-side">
-					<button id="vtShiftR" class="vtside-btn" title="Shift Right (sticky toggle)">Shift R</button>
-					<button id="vtMainR" class="vtside-btn" title="Main: hold = slot overlay, double-tap = latch">Main R</button>
+				<div class="grid" id="vtGrid"></div>
+				<div class="bank">
+					<button id="vtShiftR" class="bank-btn sticky" title="Shift Right — sticky toggle; held shift changes what every turn means"><i></i>Shift R</button>
+					<button id="vtMainR" class="bank-btn" title="Main Right — momentary; hold for the slot overlay, double-tap to latch">Main R</button>
 				</div>
 			</div>
-			<div class="hint">Drag anywhere on a knob (or scroll over it) to turn — <kbd>Alt</kbd> fine, <kbd>Cmd</kbd> coarse. The centre disc is the button; dragging from it turns while held, as press-and-turn does on the device. Focus a knob and use <kbd>↑</kbd>/<kbd>↓</kbd> (<kbd>Shift</kbd> for 10) or <kbd>Space</kbd> to press. Shift buttons are sticky toggles; Global L / Main R are momentary.</div>
+			<p class="help">Drag a knob to turn, or scroll over it. <kbd>Alt</kbd> fine, <kbd>Cmd</kbd> coarse. The centre disc is the button.</p>
 		</section>
+
+		<div class="rail">
+			<section class="pane">
+				<h2>Pages</h2>
+				<div class="slots" id="focusGrid"></div>
+			</section>
+
+			<section class="pane" id="modeRow" hidden>
+				<h2>Press mode</h2>
+				<select id="modeSel" aria-label="Press mode for the focused page"></select>
+				<p class="help" id="modeHelp"></p>
+			</section>
+
+			<section class="pane">
+				<h2>Values</h2>
+				<div class="ticks" id="values"></div>
+			</section>
+
+			<section class="pane">
+				<h2>Pulse</h2>
+				<div class="transport">
+					<button id="playBtn" class="play" aria-label="Play"><span class="glyph"></span></button>
+					<span class="lamp" id="pulseLed" aria-hidden="true"></span>
+					<span class="readout" id="pulseCount">0 pulses</span>
+				</div>
+				<div class="field">
+					<label for="bpm">Tempo</label>
+					<input id="bpm" type="number" min="1" max="999" step="1" value="120" />
+					<span class="unit">bpm</span>
+				</div>
+				<div class="field">
+					<label for="spb">Division</label>
+					<select id="spb">
+						<option value="1">Quarter</option>
+						<option value="2">Eighth</option>
+						<option value="4" selected>Sixteenth</option>
+					</select>
+				</div>
+				<div class="field">
+					<label for="clockId">Clock</label>
+					<select id="clockId">
+						<option value="cycle" selected>Cycle 0–3</option>
+						<option value="0">Fixed 0</option>
+						<option value="1">Fixed 1</option>
+						<option value="2">Fixed 2</option>
+						<option value="3">Fixed 3</option>
+					</select>
+				</div>
+				<div class="field">
+					<label for="skip">Drop</label>
+					<input id="skip" type="range" min="0" max="100" value="0" />
+					<span class="unit readout" id="skipVal">0%</span>
+				</div>
+				<p class="help">Each pulse sends <code>/twister/in/clock</code>. Drop randomly skips pulses. Browser timing jitters in a background tab.</p>
+			</section>
+		</div>
+
+		<details class="logwrap">
+			<summary>
+				<span class="sum-label">Message log</span>
+				<label class="chk"><input id="logLeds" type="checkbox" /> LED frames</label>
+				<button id="clearLog" type="button">Clear</button>
+			</summary>
+			<div id="log" aria-live="off"></div>
+		</details>
 	</main>
 
 	<main id="tab-setup" class="tab">
-		<!-- Presets -->
-		<section class="panel span2">
-			<h2>Presets — active: <span id="activePreset" class="hint">unsaved</span></h2>
-			<div class="row" style="margin-bottom:6px;"><label style="min-width:auto;">Layout (page per slot)</label></div>
-			<div class="layoutgrid" id="layoutGrid"></div>
-			<div class="row" style="margin-top:14px;">
-				<input id="presetName" type="text" placeholder="preset name" maxlength="48" style="width:180px;" />
-				<button id="savePreset" class="primary">Save as</button>
-			</div>
-			<div id="presetList"></div>
-			<div class="hint">Layout dropdowns reassign a slot's page live. "Save as" snapshots the whole interface; Load applies a saved preset (persists across restart).</div>
+		<section class="pane wide">
+			<h2>Layout</h2>
+			<div class="layout" id="layoutGrid"></div>
+			<p class="help">Each dropdown reassigns that slot's page live.</p>
 		</section>
 
-		<!-- Global settings -->
-		<section class="panel span2">
-			<h2>Global Settings</h2>
-			<div class="row">
-				<label for="set_mainDoubleClickMs">Dbl-click ms</label>
+		<section class="pane wide">
+			<h2>Presets <span class="slotchip" id="activePreset">unsaved</span></h2>
+			<div class="field">
+				<input id="presetName" type="text" placeholder="Name this layout" maxlength="48" />
+				<button id="savePreset" class="primary">Save preset</button>
+			</div>
+			<div id="presetList"></div>
+			<p class="help">A preset snapshots the whole interface — page per slot and each page's setup, not live knob values. Saved presets survive a restart.</p>
+		</section>
+
+		<section class="pane wide">
+			<h2>Timing</h2>
+			<div class="field">
+				<label for="set_mainDoubleClickMs">Double-click</label>
 				<input id="set_mainDoubleClickMs" type="number" min="1" max="5000" step="1" />
-				<label for="set_mainHoldThresholdMs">Hold ms</label>
+				<span class="unit">ms</span>
+			</div>
+			<div class="field">
+				<label for="set_mainHoldThresholdMs">Hold</label>
 				<input id="set_mainHoldThresholdMs" type="number" min="1" max="5000" step="1" />
+				<span class="unit">ms</span>
 			</div>
-			<div class="row">
-				<label for="set_debounceMs">Debounce ms</label>
+			<div class="field">
+				<label for="set_debounceMs">Debounce</label>
 				<input id="set_debounceMs" type="number" min="1" max="5000" step="1" />
-				<label for="set_fps">Render FPS</label>
+				<span class="unit">ms</span>
+			</div>
+			<div class="field">
+				<label for="set_fps">Render rate</label>
 				<input id="set_fps" type="number" min="1" max="120" step="1" />
+				<span class="unit">fps</span>
 			</div>
-			<div class="row">
-				<button id="saveSettings" class="primary">Apply &amp; Save</button>
+			<div class="field">
+				<button id="saveSettings" class="primary">Save settings</button>
 			</div>
-			<div class="hint">Applied live and persisted to settings.json. Changing FPS rebuilds the render loop.</div>
+			<p class="help">Applied live and written to settings.json. Changing the render rate rebuilds the render loop.</p>
 		</section>
 	</main>
 

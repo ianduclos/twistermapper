@@ -10,6 +10,11 @@
 const SLOTS = ["a", "b", "c", "d", "e", "f", "g", "h"]
 const PAGE_OPTIONS = ["Basic", "Gesture", "Hotelier", "Morph", "StepSeq"]
 const MODE_OPTIONS = ["note", "precision", "recall"]
+const MODE_HELP = {
+	note: "A press sends a note on, releasing sends note off.",
+	precision: "Hold a knob to make its turns fine.",
+	recall: "Press recalls a saved position. Both shifts save, left shift recalls every knob.",
+}
 
 export function initPanels({ send }) {
 	let focused = null
@@ -50,29 +55,44 @@ export function initPanels({ send }) {
 		logDirty = true
 		scheduleLogFlush()
 	}
-	document.getElementById("clearLog").onclick = () => {
+	// Both of these sit inside the <summary>, where a click would otherwise
+	// toggle the disclosure as well as doing its own job.
+	document.getElementById("clearLog").onclick = (e) => {
+		e.preventDefault()
+		e.stopPropagation()
 		logLines.length = 0
 		logDirty = true
 		scheduleLogFlush()
 	}
+	logLedsEl.closest("label").addEventListener("click", (e) => e.stopPropagation())
 
 	// ---- Focus grid -------------------------------------------------------
 	const focusGrid = document.getElementById("focusGrid")
 	function renderFocusGrid() {
 		focusGrid.innerHTML = ""
 		SLOTS.forEach((s) => {
-			const el = document.createElement("div")
+			const el = document.createElement("button")
+			el.type = "button"
 			el.className = "slot" + (s === focused ? " focused" : "")
-			el.innerHTML = `<div class="l">${s.toUpperCase()}</div><div class="t">${types[s] || ""}</div>`
+			// The colour bar is keyed off this, so a slot is identifiable at a
+			// glance without reading the label.
+			if (types[s]) el.dataset.type = types[s]
+			el.setAttribute("aria-pressed", String(s === focused))
+			el.innerHTML = `<span class="l">${s.toUpperCase()}</span><span class="t">${types[s] || "–"}</span>`
 			el.onclick = () => send("/twister/in/focus/page", s)
 			focusGrid.appendChild(el)
 		})
 	}
+	const chipEl = document.getElementById("monSlot")
+	function renderSlotChip() {
+		if (!focused) return
+		chipEl.textContent =
+			focused.toUpperCase() + (types[focused] ? ` ${types[focused].toLowerCase()}` : "")
+	}
 	function setFocus(slot) {
 		if (!SLOTS.includes(slot)) return
 		focused = slot
-		document.getElementById("monSlot").textContent =
-			slot.toUpperCase() + (types[slot] ? ` · ${types[slot]}` : "")
+		renderSlotChip()
 		renderFocusGrid()
 		renderValues()
 		renderModeControl()
@@ -80,15 +100,23 @@ export function initPanels({ send }) {
 
 	// ---- Value monitor ----------------------------------------------------
 	const valuesEl = document.getElementById("values")
+	// Sized to the indices the page actually reports, floored at 16. The old
+	// fixed 4x4 could not show a page with more values than the matrix has
+	// encoders, which was the one thing this panel existed for.
 	function renderValues() {
 		valuesEl.innerHTML = ""
 		const v = values[focused] || {}
-		for (let i = 0; i < 16; i++) {
+		const highest = Object.keys(v).reduce((m, k) => Math.max(m, Number(k)), -1)
+		const n = Math.max(16, highest + 1)
+		for (let i = 0; i < n; i++) {
 			const val = Math.max(0, Math.min(1, v[i] ?? 0))
-			const cell = document.createElement("div")
-			cell.className = "cell"
-			cell.innerHTML = `<div class="bar" style="height:${(val * 100).toFixed(0)}%"></div><div class="n">${i}</div>`
-			valuesEl.appendChild(cell)
+			const tick = document.createElement("i")
+			tick.className = "tick"
+			// Full height always, with the fill drawn into it — sixteen stubs at
+			// zero read as a broken widget rather than as sixteen zeros.
+			tick.style.setProperty("--v", `${(val * 100).toFixed(1)}%`)
+			tick.title = `${i}: ${val.toFixed(3)}`
+			valuesEl.appendChild(tick)
 		}
 	}
 
@@ -127,15 +155,16 @@ export function initPanels({ send }) {
 		modeSel.appendChild(o)
 	})
 	modeSel.onchange = () => {
+		modeHelp.textContent = MODE_HELP[modeSel.value] || ""
 		if (focused) send(`/twister/in/page/${focused}/mode`, modeSel.value)
 	}
+	const modeHelp = document.getElementById("modeHelp")
 	function renderModeControl() {
-		if (focused && types[focused] === "Basic") {
-			modeRow.style.display = ""
-			modeSel.value = modes[focused] || "note"
-		} else {
-			modeRow.style.display = "none"
-		}
+		const on = !!focused && types[focused] === "Basic"
+		modeRow.hidden = !on
+		if (!on) return
+		modeSel.value = modes[focused] || "note"
+		modeHelp.textContent = MODE_HELP[modeSel.value] || ""
 	}
 
 	// ---- Presets ----------------------------------------------------------
@@ -145,7 +174,7 @@ export function initPanels({ send }) {
 		activeEl.textContent = activePreset || "unsaved"
 		presetList.innerHTML = ""
 		if (!presets.length) {
-			presetList.innerHTML = '<div class="hint">No presets saved yet.</div>'
+			presetList.innerHTML = '<p class="help">No presets yet. Save one to keep this layout.</p>'
 			return
 		}
 		presets.forEach((name) => {
@@ -153,7 +182,7 @@ export function initPanels({ send }) {
 			row.className = "row prow"
 			const nm = document.createElement("span")
 			nm.className = "pname" + (name === activePreset ? " active" : "")
-			nm.textContent = name + (name === activePreset ? " ●" : "")
+			nm.textContent = name
 			const load = document.createElement("button")
 			load.textContent = "Load"
 			load.onclick = () => send("/twister/in/preset/load", name)
@@ -239,9 +268,8 @@ export function initPanels({ send }) {
 	}
 	function setPlaying(on) {
 		playing = on
-		playBtn.textContent = on ? "■ Stop" : "▶ Play"
 		playBtn.classList.toggle("playing", on)
-		playBtn.classList.toggle("primary", !on)
+		playBtn.setAttribute("aria-label", on ? "Stop" : "Play")
 		if (on) {
 			cyclePos = 0
 			restartTimer()
@@ -254,6 +282,11 @@ export function initPanels({ send }) {
 	bpmEl.oninput = () => { if (playing) restartTimer() }
 	spbEl.oninput = () => { if (playing) restartTimer() }
 	skipEl.oninput = () => { skipVal.textContent = `${skipEl.value}%` }
+
+	// The log skips painting while it is off-screen, and a closed <details>
+	// counts as off-screen — so opening it has to ask for the buffered repaint,
+	// exactly as switching tabs does.
+	logEl.closest("details")?.addEventListener("toggle", scheduleLogFlush)
 
 	// ---- Tabs -------------------------------------------------------------
 	document.querySelectorAll(".tabs button").forEach((btn) => {
@@ -281,7 +314,7 @@ export function initPanels({ send }) {
 			return true
 		}
 		let m = path.match(/^\/twister\/out\/page\/([a-h])\/type$/)
-		if (m) { types[m[1]] = args[0]; renderFocusGrid(); renderLayout(); renderModeControl(); return true }
+		if (m) { types[m[1]] = args[0]; renderSlotChip(); renderFocusGrid(); renderLayout(); renderModeControl(); return true }
 		m = path.match(/^\/twister\/out\/page\/([a-h])\/mode$/)
 		if (m) { modes[m[1]] = args[0]; renderModeControl(); return true }
 		m = path.match(/^\/twister\/out\/page\/([a-h])\/index\/(\d+)\/value$/)
