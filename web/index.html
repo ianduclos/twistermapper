@@ -72,6 +72,8 @@
 		.prow { gap: 8px; margin-bottom: 8px; }
 		.prow .pname { flex: 1; }
 		.prow .pname.active { color: var(--ok); font-weight: 600; }
+		.chk { display: inline-flex; align-items: center; gap: 5px; min-width: auto; cursor: pointer; }
+		.chk input { accent-color: var(--acc); margin: 0; }
 		input[type=text] { background: #0f1117; color: var(--txt); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; }
 
 		/* Virtual Twister panel */
@@ -163,6 +165,7 @@
 			<div class="row" style="margin-top:14px; margin-bottom:0;">
 				<label style="min-width:auto;">Raw</label>
 				<button id="clearLog">clear</button>
+				<label class="chk"><input id="logLeds" type="checkbox" /> log LED frames</label>
 			</div>
 			<div id="log"></div>
 		</section>
@@ -254,11 +257,46 @@
 		}
 
 		// ---- Inbound message handling ----
+		// The log is a capped ring buffer flushed at most once per animation frame.
+		// Rebuilding textContent per message forced a synchronous layout on every
+		// inbound frame — at LED-frame rates that was the UI's dominant main-thread
+		// cost, competing with the drag handler for the same thread.
 		const logEl = document.getElementById("log")
+		const logLedsEl = document.getElementById("logLeds")
+		const LOG_MAX_LINES = 200
+		const logLines = []
+		let logDirty = false
+		let logFlushHandle = null
+
+		function scheduleLogFlush() {
+			if (logFlushHandle === null) logFlushHandle = requestAnimationFrame(flushLog)
+		}
+		function flushLog() {
+			logFlushHandle = null
+			if (!logDirty) return
+			// Off-screen (other tab): keep buffering and stay dirty, skip the paint.
+			if (!logEl.offsetParent) return
+			logDirty = false
+			logEl.textContent = logLines.join("\n")
+		}
 		function log(line) {
-			logEl.textContent = (line + "\n" + logEl.textContent).slice(0, 4000)
+			logLines.unshift(line)
+			if (logLines.length > LOG_MAX_LINES) logLines.length = LOG_MAX_LINES
+			logDirty = true
+			scheduleLogFlush()
 		}
 		function handleIn({ path, args }) {
+			// LED frames arrive at the render-loop rate for as long as anything is
+			// moving. Dispatch them first and keep them out of the log unless asked:
+			// stringifying a 16-tuple array per frame is pure waste otherwise.
+			if (path === "/twister/ui/leds") {
+				if (logLedsEl.checked) log(`← ${path} ${args[0]}`)
+				try {
+					const frame = JSON.parse(args[0])
+					if (Array.isArray(frame)) applyLedFrame(frame)
+				} catch {}
+				return
+			}
 			log(`← ${path} ${JSON.stringify(args)}`)
 			if (path === "/twister/out/focus/page") { setFocus(args[0]); return }
 			if (path === "/twister/out/preset/list") { presets = args.slice(); renderPresets(); return }
@@ -270,13 +308,6 @@
 			if (m) { modes[m[1]] = args[0]; renderModeControl(); return }
 			m = path.match(/^\/twister\/out\/page\/([a-h])\/index\/(\d+)\/value$/)
 			if (m) { values[m[1]][+m[2]] = Number(args[0]); if (m[1] === focused) renderValues(); return }
-			if (path === "/twister/ui/leds") {
-				try {
-					const frame = JSON.parse(args[0])
-					if (Array.isArray(frame)) frame.forEach((tuple, id) => updateVtEncoder(id, tuple))
-				} catch {}
-				return
-			}
 		}
 
 		// ---- Focus grid ----
@@ -447,7 +478,11 @@
 		bpmEl.oninput = () => { if (playing) restartTimer() }
 		spbEl.oninput = () => { if (playing) restartTimer() }
 		skipEl.oninput = () => { skipVal.textContent = `${skipEl.value}%` }
-		document.getElementById("clearLog").onclick = () => { logEl.textContent = "" }
+		document.getElementById("clearLog").onclick = () => {
+			logLines.length = 0
+			logDirty = true
+			scheduleLogFlush()
+		}
 
 		// ---- Virtual Twister: 4x4 encoder grid (index 0 top-left -> 15 bottom-right) ----
 		// Ring is an arc sweeping ~270° clockwise with a gap centered at the bottom.
@@ -544,9 +579,57 @@
 				center.addEventListener("mouseleave", vtRelease)
 
 				// Seed a dim default so the grid isn't blank before the first LED frame.
+				// Deliberately not cached in vtLastTuples: the first real frame should
+				// always paint, even if it happens to match this placeholder.
 				updateVtEncoder(id, [0, 1, 0, 1, 0])
 			}
 		}
+
+		// A frame carries all 16 encoders but usually only one of them moved.
+		// Comparing the five fields first turns ~80 DOM writes per frame into the
+		// handful that actually changed; rAF coalescing means several frames landing
+		// inside one animation frame only paint the newest.
+		const vtLastTuples = new Array(16).fill(null)
+		let vtLatestFrame = null
+		let vtFrameDirty = false
+		let vtFrameHandle = null
+
+		function applyLedFrame(frame) {
+			vtLatestFrame = frame
+			vtFrameDirty = true
+			scheduleLedPaint()
+		}
+		function scheduleLedPaint() {
+			if (vtFrameHandle === null) vtFrameHandle = requestAnimationFrame(paintLedFrame)
+		}
+		function sameTuple(a, b) {
+			if (!a || !b || a.length !== b.length) return false
+			for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+			return true
+		}
+		function paintLedFrame() {
+			vtFrameHandle = null
+			if (!vtFrameDirty || !vtLatestFrame) return
+			vtFrameDirty = false
+			const frame = vtLatestFrame
+			const n = Math.min(16, frame.length)
+			for (let id = 0; id < n; id++) {
+				const tuple = frame[id]
+				if (!Array.isArray(tuple)) continue
+				if (sameTuple(vtLastTuples[id], tuple)) continue
+				vtLastTuples[id] = tuple.slice()
+				updateVtEncoder(id, tuple)
+			}
+		}
+
+		// rAF is paused while the tab is hidden, so buffered work lands stale.
+		// On return, drop the per-encoder cache and repaint from the latest frame.
+		document.addEventListener("visibilitychange", () => {
+			if (document.hidden) return
+			vtLastTuples.fill(null)
+			if (vtLatestFrame) { vtFrameDirty = true; scheduleLedPaint() }
+			scheduleLogFlush()
+		})
 
 		let vtDrag = null           // { id, lastY, accum } while dragging a ring
 		const vtPressDown = new Set()
@@ -614,6 +697,8 @@
 			btn.onclick = () => {
 				document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("active", b === btn))
 				document.querySelectorAll("main.tab").forEach(m => m.classList.toggle("active", m.id === btn.dataset.tab))
+				// The log skips painting while hidden; repaint whatever it buffered.
+				scheduleLogFlush()
 			}
 		})
 
