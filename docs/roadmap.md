@@ -141,6 +141,61 @@ rendering is provisional until Ian looks at it.
   (its `STATUS.md` next-item: "one page's serialize() to restore()") — better to let it
   solve that first and port the answer, as with `SettingSpec` itself.
 
+## Phase 7 — Port what gridmapper got right — PLANNED (2026-09-12)
+
+Five items, all confirmed present in `../gridmapper` and absent here. Agreed as
+hard yes on 2026-09-12; ordered by cost, not by appetite. Phase 6 (declared page
+settings) comes first — **c** is its natural follow-on and assumes it.
+
+**a. Atomic config writes.** `persistSettings()` and `writeActiveConfig()` do a
+bare `writeFileSync`. A crash, a full disk or a kill mid-write truncates
+`configs/slots.json`, which is the file the daemon boots from. gridmapper's
+`src/core/settings.ts` writes to a temp path and `renameSync`s over the target,
+behind a 300 ms debounce so a slider drag doesn't thrash the disk. Copy both
+halves. Smallest item here and the only one that fixes a live failure mode.
+
+**b. A page-authoring protocol.** `../gridmapper/docs/PAGE_PROTOCOL.md` is
+written for "a person or an LLM" and states the boundary hard — you own input
+handling and `render()`, you never touch `src/io/`, and importing from there
+means you are outside the contract — plus `src/pages/_template.ts`, an inert
+template that the loader skips by the `_` prefix. We have `Architecture.md`,
+which is a specification, not a guide. The evidence we need one: `HotelierPage`
+was made by copying `GesturePage` whole.
+
+**c. Auto-discovery.** `../gridmapper/src/pages/registry.ts` scans the pages
+directory at startup and registers every module that exports `page`, so dropping
+a file in is the whole install step. Replaces the hand-maintained
+`PAGE_FACTORIES` map in `src/core/systemConfig.ts`. The risk to settle first:
+it uses top-level await over `readdirSync` + dynamic import, which has to work
+under the launchd agent running the compiled `dist/` build, not just under tsx.
+Prove that before rewriting the boot path.
+
+**d. A real clock.** `../gridmapper/src/core/clock.ts`: four lanes, each with its
+own source (internal/external) and divisor, a master rate in Hz, run state that
+deliberately boots stopped, and an optional tick echo. Pages declare a `lane`
+setting and follow it. We have `/twister/in/clock <int>` broadcast to every page
+and nothing else. **Consider bridging before building** — gridmapper's own
+`STATUS.md` lists "twistermapper clock bridge (~20 lines now that lane IDs
+match)", which would give us lanes without a second implementation to keep in
+sync. Decide bridge-vs-build at the top of this item.
+
+**e. Idle management.** `../gridmapper/src/core/idleManager.ts` sleeps the render
+loop after N minutes of no input, with separate timeouts for device-attached and
+device-absent, a caffeinate override, and `/wake`//`sleep` routes. Note
+gridmapper's own comment: sleeping does not blank the grid, because the device
+holds its own LED state — the same is true of the MFT, so an idle Twister keeps
+its lights. Lowest urgency of the five (our per-frame cost is microseconds over
+16 encoders, not 128 cells), but it is an always-on daemon on a login agent and
+a loop that never stops is a loop nobody can reason about.
+
+**Not in scope.** External shift over OSC (`/grid/in/shift`) — only worth it if
+Max should drive the overlay remotely; ask before building. `serialize()` →
+`restore()` stays parked until gridmapper solves it, per Phase 6's note.
+
+**The traffic is not one-way.** twistermapper has the single-instance guard
+gridmapper still lists as a `next`, and now the OSC echo discipline; the
+handshake brief at `docs/gridmapper-handshake-prompt.md` asks them to adopt it.
+
 ## Known issues / follow-ups
 - ~~**Single-slot page change resets all 8 pages**~~ **FIXED (2026-06-01).** `applySystemConfig` now takes `reloadSlots` (default all, for preset load); the `slot/<x>/page` route passes only the edited slot, so the other pages keep their live runtime state. Verified: setting a value on slot D survives changing slot C's page.
 - ~~Minor: double page-type broadcast~~ **FIXED (2026-06-01).** Dropped `broadcastPageTypes()`; reloaded pages already re-emit `/type` on `init()`.

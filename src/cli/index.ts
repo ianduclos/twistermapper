@@ -354,7 +354,6 @@ const matchesBasicOnlyPath = (path: string): boolean =>
 	BASIC_ONLY_PATTERNS.some((regex) => regex.test(path))
 
 const isBasicSlot = (slot: Slot) => slotPageNames[slot] === "Basic"
-const isMorphSlot = (slot: Slot) => slotPageNames[slot] === "Morph"
 
 const allowBasicOnlyRoute = (slot: Slot, subPath: string): boolean => {
 	if (!matchesBasicOnlyPath(subPath)) return true
@@ -768,12 +767,13 @@ function routeControl(path: string, args: any[], origin: ControlOrigin = "osc") 
 		}
 		return
 	}
-	// /twister/in/dump/global → request dumps from pages that support /dump
-	// (Basic: palette/values; Morph: scene vectors).
+	// /twister/in/dump/global → ask every slot to re-emit its state. Pages that
+	// implement /dump answer (Basic: palette + values; Gesture/Hotelier: values +
+	// per-encoder mode; Morph: scene vectors); pages that don't simply ignore it.
+	// This used to be gated to Basic and Morph slots by page name, which meant a
+	// host could not re-sync the very pages it was most likely to be driving.
 	if (path === "/twister/in/dump/global") {
-		for (const slot of SLOT_INDICES) {
-			if (isBasicSlot(slot) || isMorphSlot(slot)) pm.routeOscToPage(slot, "/dump", [])
-		}
+		for (const slot of SLOT_INDICES) pm.routeOscToPage(slot, "/dump", [])
 		return
 	}
 	// --- Presets ---

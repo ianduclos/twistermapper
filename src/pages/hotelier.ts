@@ -63,6 +63,20 @@ export function HotelierPage(): Page {
 		ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/index/${i}/value`, v)
 	}
 
+	// /dump — re-emit everything a host needs to re-sync this page without a
+	// reload: the type, all sixteen values, and the per-encoder mode. The mode
+	// matters because /set is only accepted on an encoder in standby, so a host
+	// that dumps knows which ones it may push to. Bypasses the per-encoder
+	// dedup in emitOsc on purpose: a dump is a request for the whole picture,
+	// not a change notification.
+	const sendDump = (ctx: PageContext) => {
+		emitPageType(ctx)
+		const valuePayload = vals.map((v) => toFixedN(v, 5))
+		for (let i = 0; i < 16; i++) lastEmitted[i] = valuePayload[i]
+		ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/index/all/value`, ...valuePayload)
+		ctx.osc.send(`/twister/out/page/${ctx.slotLabel}/index/all/mode`, ...mode)
+	}
+
 	const stopTimer = (i: EncId) => {
 		if (timers[i]) {
 			clearInterval(timers[i]!)
@@ -198,6 +212,10 @@ export function HotelierPage(): Page {
 		},
 		onOsc(path, args, ctx) {
 			ctxRef = ctx
+			if (path === "/dump") {
+				sendDump(ctx)
+				return
+			}
 			// Only accept /set while in standby.
 			const m = path.match(/^\/index\/(\d{1,2})\/set$/)
 			if (!m) return

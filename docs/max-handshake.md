@@ -57,9 +57,11 @@ The daemon clamps to `0..1`, stores it, and repaints that encoder's LEDs.
   does not emit a `/value` reply, so the patch cannot feed back on itself and
   needs no gate around its receive. (The web UI still sees the change — it is
   not the thing that sent it.)
-- **Hotelier only accepts `/set` on an encoder in `standby`** — not one that is
-  recording or playing back. Straight after a preset load everything is in
-  standby, so a boot-time push always lands. Mid-session it may not.
+- **Hotelier and Gesture only accept `/set` on an encoder in `standby`** — not
+  one that is recording or playing back. Straight after a preset load everything
+  is in standby, so a boot-time push always lands. Mid-session it may not: ask
+  for `/twister/in/dump/global` and read `/index/all/mode` to find out which
+  encoders are writable.
 - A burst of 16–32 sets is fine. OSC input is not rate limited; the LED
   reconciler is (R5: 64 msgs/5 ms, 400 msgs/sec), so the rings settle over a
   frame or two rather than instantly. Nothing is dropped.
@@ -78,10 +80,23 @@ Unchanged from what the patch already does:
     /twister/in/focus/page <a..h>     switch the focused page
     → /twister/out/focus/page <slot>  confirmation
 
-    /twister/in/dump/global           ask Basic and Morph pages to re-emit
-                                      their state — use this to re-sync Max if
-                                      the patch reopens while the daemon keeps
-                                      running, instead of re-running phase 1
+    /twister/in/dump/global           ask every slot to re-emit its state — the
+                                      re-sync path when the patch reopens while
+                                      the daemon keeps running, instead of
+                                      re-running phase 1
+
+Pages that implement `/dump` answer it; pages that don't ignore it. Basic sends
+its palette and `/index/all/value`; Gesture and Hotelier send
+`/index/all/value` plus `/index/all/mode` (sixteen of `standby|record|play`);
+Morph sends its four scene vectors. All of them re-send `/page/<slot>/type`
+first.
+
+`/index/all/mode` is the one to read before pushing: `/set` is only accepted on
+an encoder in `standby`, so the mode array tells the patch which encoders it may
+write to right now. Straight after a preset load every encoder is in standby.
+
+A dump deliberately ignores the per-encoder dedup, so it always reports the full
+picture even if nothing has changed since the last message.
 
     /twister/in/preset/list           → /twister/out/preset/list <names…>
     /twister/in/preset/save <name>    overwrite/create from the live layout
@@ -98,7 +113,7 @@ Basic pages also emit a bulk dump in response to `/dump`:
 |---|---|
 | No `/pong` | Daemon down, or ports held by a dev run |
 | `/preset/active ""` | Load failed — bad name or missing file |
-| `/set` has no visible effect on slot `a` | That Hotelier encoder is not in standby |
+| `/set` has no visible effect on slot `a` | That Hotelier encoder is not in standby — check `/index/all/mode` |
 | Values stop arriving mid-session | Daemon restarted; re-run phases 0–2 |
 
 Because the daemon announces nothing on restart, give the patch a manual

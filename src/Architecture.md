@@ -90,6 +90,7 @@ In (page):
 • /twister/in/page/<slot>/config/colorbrightness/map <16 ints> → replace BasicPage encoder brightness map.
 • /twister/in/page/<slot>/config/colorbrightness/enc/<id>/set <int> → update a single BasicPage encoder brightness.
 • /twister/in/page/<slot>/scene/<k>/set <12 floats> → restore MorphPage scene k (k 0–3); ignored if the slot isn't MorphPage.
+• /twister/in/page/<slot>/dump — and the global /twister/in/dump/global — ask a page to re-emit its state. Every slot receives it; pages that implement it answer, pages that don't ignore it (no page-name gate). Basic: /config/color/map + /index/all/value. Gesture and Hotelier: /index/all/value + /index/all/mode (16 of standby|record|play — /set is only accepted in standby, so this is how a host learns which encoders are writable). Morph: /scene/<k>/values. All re-send /page/<slot>/type first, and a dump bypasses per-encoder dedup so it always reports the full picture.
 • /twister/in/page/<slot>/mode <note|precision|recall> → set BasicPage mode (ignored by other pages); page echoes /twister/out/page/<slot>/mode.
 
 OSC numeric rules:
