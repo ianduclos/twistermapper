@@ -1,34 +1,60 @@
 ---
 project: twistermapper
 state: active
-updated: 2026-07-19
+updated: 2026-09-12
 machine: mac
-summary: Blank page + configurable OSC ports committed (32/32 tests green); a knob-LED-flash-to-zero bug is under active investigation, likely in the hotplug watcher's own polling, not confirmed fixed.
+summary: The web UI's Phase 5 design pass landed and the daemon gained a Max boot handshake — ping/pong, preset load, and value sets that no longer echo back — but the launchd agent still runs a pre-handshake build and a Morph page flashing report is undiagnosed.
 next:
-  - Confirm/fix the hotplug-polling LED-flash bug (see HANDOFF.md)
-  - Rebuild + restart the launchd agent to deploy Blank page / OSC-port settings (not yet deployed)
-  - Finish StepSeq latch-in-shift interaction (in-progress, see CLAUDE.md known gaps)
-  - Consider per-track mute/loop + playhead viz in web UI (roadmap follow-ups)
+  - Rebuild and restart the launchd agent — dist/ predates today's echo suppression, so the running daemon still echoes
+  - Live-verify the echo suppression, then build the Max side against docs/max-handshake.md
+  - Diagnose the Morph page flashing Ian reported (see HANDOFF.md)
+  - Build Phase 6 — declared page settings, planned in docs/roadmap.md
+  - Confirm or close the July hotplug LED-flash bug (see HANDOFF.md)
 handoff_for: claude
 ---
 
 # twistermapper — status
 
-Phases 1–4 done (render loop, StepSeq, global presets, virtual Twister +
-ops). New: `BlankPage` (inert, LEDs off) and OSC in/out ports moved to
-`configs/settings.json` (defaults unchanged, boot-time only). Deployed via
-launchd agent (`./scripts/agent.sh`); dev sessions must stop the agent first
-(port/lock gotcha in CLAUDE.md). Source of truth for behavior and rules
-R1–R9 is `src/Architecture.md` — it wins over CLAUDE.md on disagreement.
-Sibling of `../gridmapper` (shared architecture, different driver/page
-semantics).
+Headless MIDI Fighter Twister ↔ OSC daemon. Source of truth for behavior and
+rules R1–R10 is `src/Architecture.md` — it wins over `CLAUDE.md` on
+disagreement. Sibling of `../gridmapper` (shared architecture, different
+driver and page semantics).
 
-Open issue: Ian reported knob LEDs flashing to 0 during use. Traced to
-`startTwisterWatcher()`'s hotplug polling likely producing false
-disconnect/reconnect cycles (each one replays the boot splash). Root cause
-identified but not yet confirmed live or fixed — see `HANDOFF.md`.
+**Phases 1–5 done.** Render loop, StepSeq, global presets, virtual Twister, and
+— as of 2026-09-12 — the web UI reworked from a monitoring page into an
+instrument: encoders on one plate, Flexoki palette vendored from source,
+emissive LEDs, prediction on the ring, 60fps in `--fake`. Phase 5's three
+deliberate omissions (a real 127-entry MFT colour LUT, true pulse *phase* sync,
+per-page encoder labels) stand. 63 tests green.
 
-Test suites: 7 (ledReconciler, renderLoop, inputDecoder, controlServer,
-singleInstance, scale, fakeMidiDriver), 32 tests, all green as of
-2026-07-19. The launchd agent still runs the pre-session build (dist/ not
-rebuilt/redeployed this session).
+**Max boot handshake.** `docs/max-handshake.md` is the contract a patch follows
+to bring the Twister up in a known state: `/twister/in/ping` → `/pong` for
+liveness, `/twister/in/preset/load <name>` with `/twister/out/preset/active` as
+the completion signal, then a push of values over
+`/twister/in/page/<slot>/index/<i>/set`. The behavior change that made it safe:
+a value set arriving **over OSC** no longer echoes back as `/index/<i>/value`,
+so a patch that both sends and listens cannot feed back on itself. Sets arriving
+from the web UI still emit to OSC, and the UI still sees Max's sets —
+`routeControl` takes an origin to tell them apart. Documented in
+`src/Architecture.md` under "In (page)".
+
+**Deployed layout.** `configs/presets/hotelier.json` is the gig layout the
+handshake loads by name (a: Hotelier, b: Gesture, c–h: Basic) and is the active
+config. StepSeq is not in it; a preset naming it brings it back.
+
+**Not deployed.** The launchd agent (`com.ianduclos.twistermapper`) is running,
+but `dist/` was built at 01:57 today — before the echo suppression. Until
+`npm run build` + `./scripts/agent.sh restart`, the live daemon still echoes.
+Dev runs need the agent stopped first (it holds the MIDI/OSC ports and the
+single-instance lock).
+
+**Planned.** `docs/roadmap.md` Phase 6 — declared page settings, ported from
+gridmapper's `SettingSpec`. Scope is settled: pages export a `SETTINGS` array
+alongside their factory, the browser gets the manifest as
+`/twister/out/pagespecs`, and `BASIC_ONLY_PATTERNS` retires. Auto-discovery and
+settings-in-presets are scoped out with reasons.
+
+**Cross-repo.** `docs/gridmapper-handshake-prompt.md` is a ready-to-use brief
+for giving gridmapper the same handshake — it lacks ping/pong and any preset
+layer, and has the same settings-echo hazard. Nothing has been written into that
+repo.

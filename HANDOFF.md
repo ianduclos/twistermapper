@@ -1,8 +1,14 @@
 ---
 project: twistermapper
-updated: 2026-07-19
-entries: 1
+updated: 2026-09-12
+entries: 2
 ---
+
+### Morph page flashing — opened 2026-09-12, owner: claude
+- done: Ian reported "crazy flashing" on switching a slot to Morph, and suspects it is not confined to that page. Ruled out by reading: there is only one writer to the LEDs (`renderTick`, `src/cli/index.ts`), Morph's frame is deterministic and cannot oscillate on its own, and the web UI's page selector cannot feed back (`renderLayout()` rebuilds the `<select>` rather than setting its value). Established that Morph is in no slot in the committed config, so it was loaded live via the Setup tab — meaning the suspect path is `applySystemConfig` → `pm.load` → fresh page → focus repaint, not Morph's steady state. Separately found a real reconciler defect while looking: when an encoder enters `pulse`, the suppressed `ledBrightness` is never cleared from `pending` and the cache is never updated, so that encoder stays in the pending map forever and the brightness change it carried is silently lost (`src/render/ledReconciler.ts`, the `skipLedBrightness` branch). Not yet tied to the flashing. Morph pulses on scene save; Gestures pulses while recording.
+- next: `./scripts/agent.sh stop`, then `npm run dev -- --fake`, switch a slot to Morph in the Setup tab and watch the browser grid. Flashing in the browser too ⇒ daemon-side, chase it from the LED mirror. Hardware only ⇒ it is the hotplug entry below replaying the boot splash, and the two reports are one bug.
+- blockers: needs a live run; the agent holds the MIDI/OSC ports and the single-instance lock, so it must be stopped first and restarted after.
+- context: `src/cli/index.ts` (`renderTick`, `applySystemConfig`, `currentDesired`); `src/render/ledReconciler.ts`; `src/pages/morph.ts`; the entry below.
 
 ### LED flash-to-zero on hotplug reconnect — opened 2026-07-19, owner: claude
 - done: Ian reported knob LEDs jumping to 0 during normal use. Log shows a burst of `[Hotplug] Twister reconnected → splash` cycles right after each daemon (re)start, each preceded by a `MidiOutCore::getPortName: the 'portNumber' argument (N) is invalid` warning and a fallback to the wrong port ("Midi Bus Bus 1") — i.e. the watcher briefly thinks the Twister disconnected, rebuilds the driver, and replays the boot splash, which is the flash Ian sees. `ioreg -p IOUSB` shows the physical device staying registered/active/busy-0 throughout, so this points away from a cable/hardware fault and at `startTwisterWatcher()`'s polling itself: `hasTwisterOutput()` (src/cli/index.ts, near `rebuildIoAndSplash`) spins up a brand-new `midiLib.Output()` purely to enumerate ports every 1.5s, then closes it — plausibly racing CoreMIDI's port list against the real open output and producing false disconnect/reconnect flips.
@@ -71,6 +77,36 @@ and factual.
 ---
 
 ## Session log (newest first)
+### 2026-09-12 — Claude
+Two sessions in one day. The first (separate, hit the usage limit mid-question)
+landed Phase 5: six commits reworking the virtual Twister and giving the web UI
+its design pass. This one answered the three questions left hanging on that
+limit and built the Max boot handshake.
+- **Handshake:** `docs/max-handshake.md` — ping/pong liveness,
+  `/twister/in/preset/load` with `/twister/out/preset/active` as the completion
+  signal, the value push, failure modes. Behavior change behind it: a value set
+  arriving over OSC no longer echoes back as `/index/<i>/value`, so a patch that
+  both sends and listens cannot feed back on itself. `routeControl` now takes an
+  origin, so web-UI sets still reach Max and the UI still sees Max's sets.
+  Recorded in `src/Architecture.md` under "In (page)".
+- **UI:** per-row Overwrite button on presets (saving under an existing name
+  always replaced it; there was just no way to reach that without retyping).
+  Knobs lost the specular — bloom and cap stay, both `ledBrightness`-driven.
+- **Config:** `configs/presets/hotelier.json` committed as the gig layout the
+  handshake loads by name; `slots.json` now carries it as active.
+- **Planned:** roadmap Phase 6 — declared page settings ported from gridmapper's
+  `SettingSpec`. Scope settled, auto-discovery and settings-in-presets scoped out
+  with reasons.
+- **Cross-repo:** `docs/gridmapper-handshake-prompt.md`, a ready-to-use brief for
+  giving gridmapper the same handshake. Nothing written into that repo.
+- **Verified?** `tsc --noEmit` clean, 63/63 tests green. The echo suppression is
+  NOT live-tested against a running daemon, and the UI changes are ready for Ian
+  to look at, not confirmed.
+- **Deployment:** none. `dist/` is from 01:57 and predates the echo suppression;
+  the agent is up and still running that build.
+- **Next:** rebuild + restart the agent; live-verify the echo suppression; the
+  Morph flashing entry above.
+
 ### 2026-09-10 — Codex
 Added `HotelierPage` as an independent copy of GesturePage, registered as
 `Hotelier` in the factory and web UI selector. No slot assignment changed.
