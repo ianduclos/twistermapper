@@ -508,9 +508,22 @@ const pm = new PageManager(baseCtx, (_frame, reason) => {
 	if (reason === "focus") needsFocusPaint = true
 })
 
+/**
+ * Effective render rate.
+ *
+ * 30 FPS is chosen for hardware because the MFT's LED throughput caps out around
+ * 400 msgs/sec (R5) — not because anything upstream needs to be slow. In fake
+ * mode FakeMidiDriver no-ops every device write, so that ceiling does not exist
+ * and the only consumer is the browser; run at least 60 there so the UI's
+ * authoritative frames arrive at display rate.
+ */
+function effectiveFps(): number {
+	return fakeMode ? Math.max(settings.render.fps, 60) : settings.render.fps
+}
+
 // Fixed-rate render loop: the single output path to the device.
 // Reassignable so a live fps change can rebuild the loop (see applyGlobalSettings).
-let renderLoop: RenderLoop = createRenderLoop({ fps: settings.render.fps, onFrame: renderTick })
+let renderLoop: RenderLoop = createRenderLoop({ fps: effectiveFps(), onFrame: renderTick })
 
 // Load & focus slot A (and remember which)
 void (async () => {
@@ -689,7 +702,7 @@ function applyGlobalSettings(next: Settings) {
 	persistSettings(next)
 	if (fpsChanged) {
 		renderLoop.stop()
-		renderLoop = createRenderLoop({ fps: settings.render.fps, onFrame: renderTick })
+		renderLoop = createRenderLoop({ fps: effectiveFps(), onFrame: renderTick })
 		needsFocusPaint = true
 		renderLoop.start()
 	}

@@ -25,7 +25,9 @@ import {
 	accumulateDrag,
 	chunkDelta,
 	clampValue,
+	reconcile,
 	WHEEL_STEP_PX,
+	SETTLE_MS,
 } from "./lib/knobMath.js"
 
 // Ring is an arc sweeping ~270° clockwise with a gap centred at the bottom.
@@ -91,6 +93,7 @@ export function initTwister({ send }) {
 		if (!delta) return
 		pendingTurns.set(id, (pendingTurns.get(id) || 0) + delta)
 		if (turnFlushHandle === null) turnFlushHandle = requestAnimationFrame(flushTurns)
+		predictTurn(id, delta)
 	}
 	function flushTurns() {
 		turnFlushHandle = null
@@ -150,10 +153,11 @@ export function initTwister({ send }) {
 			attachPointer(root, id)
 			attachKeyboard(root, id)
 
-			// Seed a dim default so the grid isn't blank before the first LED frame.
-			// Deliberately not cached in lastTuples: the first real frame should
-			// always paint, even if it happens to match this placeholder.
-			updateEncoder(id, [0, 1, 0, 1, 0])
+			// Seed a dim default so the grid isn't blank before the first LED frame,
+			// and give prediction something to build on if a turn somehow lands
+			// first. lastRendered stays null, so the first real frame always paints.
+			authTuples[id] = [0, 1, 0, 1, 0]
+			updateEncoder(id, authTuples[id])
 		}
 	}
 
@@ -263,36 +267,78 @@ export function initTwister({ send }) {
 		els.root.setAttribute("aria-valuenow", String(value))
 	}
 
-	// ---- Frame application ------------------------------------------------
-	// A frame carries all 16 encoders but usually only one of them moved.
-	// Comparing the five fields first turns ~80 DOM writes per frame into the
-	// handful that actually changed; rAF coalescing means several frames landing
-	// inside one animation frame only paint the newest.
-	const lastTuples = new Array(16).fill(null)
-	let latestFrame = null
-	let frameDirty = false
+	// ---- Prediction + frame application -----------------------------------
+	// The ring moves the moment you drag it, rather than waiting for the round
+	// trip through the daemon and the next render tick. Only the ring is
+	// predicted: it is the one thing a turn moves, and colour, brightness and
+	// pulse are page logic the browser has no way to model.
+	//
+	// A prediction holds only while turns are still in flight. Once the settle
+	// window passes, the daemon's value is the truth — so a page that clamps or
+	// quantizes snaps back once, after the gesture, instead of fighting it
+	// mid-drag. See reconcile() in lib/knobMath.js.
+	const authTuples = new Array(16).fill(null)   // last frame from the daemon
+	const predicted = new Array(16).fill(null)    // local ring guess, or null
+	const pendingSince = new Array(16).fill(null) // when this encoder last turned
+	const lastRendered = new Array(16).fill(null) // what is actually on screen
 	let frameHandle = null
+	let settleHandle = null
 
 	function sameTuple(a, b) {
 		if (!a || !b || a.length !== b.length) return false
 		for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
 		return true
 	}
+
+	function predictTurn(id, delta) {
+		const base = predicted[id] ?? (authTuples[id] ? clampValue(authTuples[id][0]) : 0)
+		predicted[id] = clampValue(base + delta)
+		pendingSince[id] = performance.now()
+		schedulePaint()
+		// Nothing else will necessarily wake us when the window expires, so make
+		// sure the hand-back to the daemon's value actually happens.
+		if (settleHandle === null) {
+			settleHandle = setTimeout(() => {
+				settleHandle = null
+				schedulePaint()
+			}, SETTLE_MS + 20)
+		}
+	}
+
+	/** What encoder `id` should show right now, prediction included. */
+	function effectiveTuple(id, now) {
+		const a = authTuples[id]
+		if (!a) return null
+		const { value, predicting } = reconcile({
+			predicted: predicted[id],
+			authoritative: clampValue(a[0]),
+			pendingSince: pendingSince[id],
+			now,
+		})
+		if (!predicting) {
+			predicted[id] = null
+			pendingSince[id] = null
+		}
+		return [value, a[1], a[2], a[3], a[4]]
+	}
+
 	function schedulePaint() {
 		if (frameHandle === null) frameHandle = requestAnimationFrame(paintFrame)
 	}
+
+	// A frame carries all 16 encoders but usually only one of them moved.
+	// Comparing the five fields first turns ~80 DOM writes per frame into the
+	// handful that actually changed; rAF coalescing means several frames landing
+	// inside one animation frame only paint the newest.
 	function paintFrame() {
 		frameHandle = null
-		if (!frameDirty || !latestFrame) return
-		frameDirty = false
-		const frame = latestFrame
-		const n = Math.min(16, frame.length)
-		for (let id = 0; id < n; id++) {
-			const tuple = frame[id]
-			if (!Array.isArray(tuple)) continue
-			if (sameTuple(lastTuples[id], tuple)) continue
-			lastTuples[id] = tuple.slice()
-			updateEncoder(id, tuple)
+		const now = performance.now()
+		for (let id = 0; id < 16; id++) {
+			const eff = effectiveTuple(id, now)
+			if (!eff) continue
+			if (sameTuple(lastRendered[id], eff)) continue
+			lastRendered[id] = eff
+			updateEncoder(id, eff)
 		}
 	}
 
@@ -301,20 +347,20 @@ export function initTwister({ send }) {
 		let frame
 		try { frame = JSON.parse(json) } catch { return }
 		if (!Array.isArray(frame)) return
-		latestFrame = frame
-		frameDirty = true
+		const n = Math.min(16, frame.length)
+		for (let id = 0; id < n; id++) {
+			if (Array.isArray(frame[id])) authTuples[id] = frame[id]
+		}
 		schedulePaint()
 	}
 
 	// rAF is paused while the tab is hidden, so buffered work lands stale.
-	// On return, drop the per-encoder cache and repaint from the latest frame.
+	// On return, drop what we think is on screen and repaint from the latest
+	// frame; any prediction from before the tab was hidden is long expired.
 	document.addEventListener("visibilitychange", () => {
 		if (document.hidden) return
-		lastTuples.fill(null)
-		if (latestFrame) {
-			frameDirty = true
-			schedulePaint()
-		}
+		lastRendered.fill(null)
+		schedulePaint()
 	})
 
 	// ---- Side buttons -----------------------------------------------------
