@@ -905,6 +905,9 @@ if (uiEnabled) {
 		onMessage: routeControl,
 		onConnect: (send) => {
 			// Snapshot so a late-joining UI reflects current state immediately.
+			// Fake mode makes the browser grid the only way to play the thing, so
+			// the UI promotes it; with hardware attached it is just a mirror.
+			send("/twister/out/mode", [fakeMode ? "fake" : "hardware"])
 			send("/twister/out/focus/page", [slotLabel(focusedSlot)])
 			for (const slot of SLOT_INDICES) {
 				send(`/twister/out/page/${slotLabel(slot)}/type`, [slotPageNames[slot]])

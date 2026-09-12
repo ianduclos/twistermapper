@@ -268,6 +268,10 @@ export function initPanels({ send }) {
 	// ---- Inbound routing --------------------------------------------------
 	/** Handle one daemon message. Returns false if the path isn't ours. */
 	function handle(path, args) {
+		if (path === "/twister/out/mode") {
+			document.body.classList.toggle("fake-mode", args[0] === "fake")
+			return true
+		}
 		if (path === "/twister/out/focus/page") { setFocus(args[0]); return true }
 		if (path === "/twister/out/preset/list") { presets = args.slice(); renderPresets(); return true }
 		if (path === "/twister/out/preset/active") { activePreset = args[0] || ""; renderPresets(); return true }

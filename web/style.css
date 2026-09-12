@@ -1,11 +1,31 @@
 /* Twister Manager — web UI styles.
  * Served straight from web/ by controlServer.ts; no build step.
+ *
+ * Colour comes from Flexoki (kepano/flexoki, MIT) — flexoki.css holds the raw
+ * scale verbatim, and the roles below are kepano's published dark mapping:
+ * black/950 for grounds, 900/850 for surfaces and lines, 200 for text, 500 for
+ * muted text, and the 400-level accents that are meant for dark backgrounds.
  */
 
+@import url("flexoki.css");
+
 :root {
-	--bg: #0e0f13; --panel: #171a21; --line: #262b36; --txt: #e6e9ef;
-	--mut: #8a93a6; --acc: #6ea8fe; --ok: #51cf66; --warn: #ffd43b; --bad: #ff6b6b;
+	--bg:     var(--flexoki-black);
+	--bg-2:   var(--flexoki-950);
+	--panel:  var(--flexoki-950);
+	--ui:     var(--flexoki-900);
+	--ui-2:   var(--flexoki-850);
+	--line:   var(--flexoki-850);
+	--line-2: var(--flexoki-800);
+	--txt:    var(--flexoki-200);
+	--mut:    var(--flexoki-500);
+	--faint:  var(--flexoki-700);
+	--acc:    var(--flexoki-blue-400);
+	--ok:     var(--flexoki-green-400);
+	--warn:   var(--flexoki-yellow-400);
+	--bad:    var(--flexoki-red-400);
 }
+
 * { box-sizing: border-box; }
 body {
 	margin: 0; background: var(--bg); color: var(--txt);
@@ -19,8 +39,16 @@ header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .3px; 
 #status { margin-left: auto; font-size: 12px; color: var(--mut); display: flex; align-items: center; gap: 6px; }
 #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); }
 #dot.on { background: var(--ok); }
-main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 18px; max-width: 1000px; }
-@media (max-width: 720px) { main { grid-template-columns: 1fr; } }
+main {
+	display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 16px; padding: 18px; max-width: 1180px; width: 100%;
+}
+@media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } }
+/* Grid items default to min-width:auto, which refuses to shrink below their
+   content and pushes the whole page wider than the viewport. */
+.panel { min-width: 0; }
+/* A range input carries an intrinsic width that outgrows a narrow column. */
+input[type=range] { flex: 1 1 80px; min-width: 0; }
 .tabs { display: flex; gap: 2px; padding: 0 18px; border-bottom: 1px solid var(--line); }
 .tabs button { background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0; color: var(--mut); padding: 10px 14px; cursor: pointer; font: inherit; }
 .tabs button:hover { color: var(--txt); }
@@ -31,34 +59,38 @@ main.tab.active { display: grid; }
 .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--mut); margin: 0 0 14px; }
 .row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
 label { color: var(--mut); font-size: 12px; min-width: 64px; }
-input[type=number], select {
-	background: #0f1117; color: var(--txt); border: 1px solid var(--line);
+input[type=number], select, input[type=text] {
+	background: var(--ui); color: var(--txt); border: 1px solid var(--line-2);
 	border-radius: 6px; padding: 6px 8px; font: inherit; width: 84px;
+}
+input[type=text] { width: auto; }
+input[type=number]:focus-visible, select:focus-visible, input[type=text]:focus-visible {
+	outline: none; border-color: var(--acc);
 }
 input[type=range] { flex: 1; accent-color: var(--acc); }
 button {
-	background: #232936; color: var(--txt); border: 1px solid var(--line);
+	background: var(--ui-2); color: var(--txt); border: 1px solid var(--line-2);
 	border-radius: 6px; padding: 8px 12px; font: inherit; cursor: pointer;
 }
 button:hover { border-color: var(--acc); }
-button.primary { background: var(--acc); color: #08111f; border-color: var(--acc); font-weight: 600; }
-button.playing { background: var(--bad); border-color: var(--bad); color: #1a0808; }
+button.primary { background: var(--acc); color: var(--flexoki-black); border-color: var(--acc); font-weight: 600; }
+button.playing { background: var(--bad); border-color: var(--bad); color: var(--flexoki-black); }
 .focusgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .slot {
 	text-align: center; padding: 10px 6px; border-radius: 8px; cursor: pointer;
-	background: #0f1117; border: 1px solid var(--line);
+	background: var(--ui); border: 1px solid var(--line);
 }
 .slot:hover { border-color: var(--acc); }
-.slot.focused { border-color: var(--acc); background: #1b2740; }
+.slot.focused { border-color: var(--acc); background: var(--ui-2); }
 .slot .l { font-size: 17px; font-weight: 700; }
 .slot .t { font-size: 10px; color: var(--mut); text-transform: uppercase; letter-spacing: .5px; min-height: 12px; }
-#pulseLed { width: 12px; height: 12px; border-radius: 50%; background: #333; transition: background .04s; }
+#pulseLed { width: 12px; height: 12px; border-radius: 50%; background: var(--line-2); transition: background .04s; }
 #pulseLed.flash { background: var(--warn); }
 .values { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; max-width: 360px; }
-.cell { background: #0f1117; border: 1px solid var(--line); border-radius: 5px; height: 56px; position: relative; overflow: hidden; }
+.cell { background: var(--ui); border: 1px solid var(--line); border-radius: 5px; height: 56px; position: relative; overflow: hidden; }
 .cell .bar { position: absolute; bottom: 0; left: 0; right: 0; background: var(--acc); opacity: .8; }
 .cell .n { position: absolute; top: 2px; left: 4px; font-size: 9px; color: var(--mut); }
-#log { font-family: ui-monospace, monospace; font-size: 11px; color: var(--mut); height: 150px; overflow: auto; background: #0b0d12; border: 1px solid var(--line); border-radius: 6px; padding: 8px; white-space: pre-wrap; }
+#log { font-family: ui-monospace, monospace; font-size: 11px; color: var(--mut); height: 150px; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; white-space: pre-wrap; }
 .hint { font-size: 11px; color: var(--mut); margin-top: 4px; }
 .span2 { grid-column: 1 / -1; }
 .layoutgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
@@ -70,40 +102,40 @@ button.playing { background: var(--bad); border-color: var(--bad); color: #1a080
 .prow .pname.active { color: var(--ok); font-weight: 600; }
 .chk { display: inline-flex; align-items: center; gap: 5px; min-width: auto; cursor: pointer; }
 .chk input { accent-color: var(--acc); margin: 0; }
-input[type=text] { background: #0f1117; color: var(--txt); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; }
-
-/* Virtual Twister panel */
-.vtwister-row { display: flex; align-items: center; gap: 14px; }
-.vtwister-side { display: flex; flex-direction: column; gap: 8px; flex: 0 0 auto; }
-.vtside-btn {
-	font-size: 11px; padding: 8px 6px; min-width: 64px; text-align: center;
-	user-select: none;
+kbd {
+	font: 11px/1 ui-monospace, monospace; background: var(--ui); color: var(--txt);
+	border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 4px;
+	padding: 1px 4px; margin: 0 1px;
 }
-.vtside-btn.active { background: var(--acc); color: #08111f; border-color: var(--acc); font-weight: 600; }
-.vtwister-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; flex: 1 1 auto; }
-.vtenc { background: #0f1117; border: 1px solid var(--line); border-radius: 8px; }
+
+/* --- Virtual Twister ----------------------------------------------------- */
+.vtwister-row { display: flex; align-items: center; justify-content: center; gap: 18px; }
+.vtwister-side { display: flex; flex-direction: column; gap: 10px; flex: 0 0 auto; }
+.vtside-btn { font-size: 11px; padding: 8px 6px; min-width: 72px; text-align: center; user-select: none; }
+.vtside-btn.active { background: var(--acc); color: var(--flexoki-black); border-color: var(--acc); font-weight: 600; }
+.vtwister-grid {
+	display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 8px; flex: 0 1 auto; width: min(100%, 420px);
+}
+.vtenc {
+	background: var(--ui); border: 1px solid var(--line); border-radius: 10px;
+	cursor: ns-resize; transition: border-color .08s, background .08s;
+	-webkit-user-select: none; user-select: none; touch-action: none;
+}
 .vtenc svg { display: block; width: 100%; height: auto; }
-.vtenc .vt-ring-bg { fill: none; stroke: var(--line); stroke-width: 10; stroke-linecap: round; }
-.vtenc .vt-ring-val { fill: none; stroke: var(--acc); stroke-width: 10; stroke-linecap: round; cursor: ns-resize; }
-.vtenc .vt-center { cursor: pointer; }
-.vtenc .vt-label { fill: var(--mut); font-size: 9px; text-anchor: middle; pointer-events: none; }
-.vtenc .vt-center.vt-pulse { animation: vtPulse 0.6s ease-in-out infinite; }
-@keyframes vtPulse {
-	0%, 100% { fill-opacity: 1; }
-	50% { fill-opacity: 0.35; }
-}
+.vtenc .vt-ring-bg { fill: none; stroke: var(--line-2); stroke-width: 10; stroke-linecap: round; }
+.vtenc .vt-ring-val { fill: none; stroke: var(--acc); stroke-width: 10; stroke-linecap: round; }
+.vtenc .vt-label { fill: var(--faint); font-size: 9px; text-anchor: middle; pointer-events: none; }
 
-/* --- Virtual Twister: interaction states -------------------------------- */
 /* The whole cell is the hit target; the zone under the pointer decides whether
-   it acts as a knob or a button, so the cursor has to follow the pointer rather
-   than sit on one child element. */
-.vtenc { cursor: ns-resize; transition: border-color .08s, background .08s; }
+   it acts as a knob or a button, so the cursor follows the pointer rather than
+   sitting on one child element. */
 .vtenc.over-center { cursor: pointer; }
-.vtenc:hover { border-color: var(--mut); }
-.vtenc:focus-visible { outline: none; border-color: var(--acc); box-shadow: 0 0 0 2px rgba(110, 168, 254, .25); }
-.vtenc.dragging { border-color: var(--acc); background: #12161f; }
-.vtenc.pressed .vt-center { transform: scale(.88); transform-origin: 50% 50%; }
+.vtenc:hover { border-color: var(--line-2); }
+.vtenc:focus-visible { outline: none; border-color: var(--acc); box-shadow: 0 0 0 2px rgb(67 133 190 / .3); }
+.vtenc.dragging { border-color: var(--acc); background: var(--ui-2); }
 .vtenc .vt-center { transition: transform .06s ease-out; }
+.vtenc.pressed .vt-center { transform: scale(.88); transform-origin: 50% 50%; }
 .vtenc .vt-readout {
 	fill: var(--txt); font-size: 15px; font-weight: 600; text-anchor: middle;
 	pointer-events: none; opacity: 0; transition: opacity .12s;
@@ -111,16 +143,43 @@ input[type=text] { background: #0f1117; color: var(--txt); border: 1px solid var
 }
 .vtenc:hover .vt-readout, .vtenc.dragging .vt-readout, .vtenc:focus-visible .vt-readout { opacity: .92; }
 
-/* A sticky shift changes what every turn means — make that hard to miss. */
-.vtwister-grid.shifted { outline: 1px solid var(--warn); outline-offset: 6px; border-radius: 10px; }
-
-@media (prefers-reduced-motion: reduce) {
-	.vtenc, .vtenc .vt-center, .vtenc .vt-readout { transition: none; }
-	.vtenc .vt-center.vt-pulse { animation: none; }
+/* The device's pulse is an animation *mode* the page turns on, not a per-beat
+   trigger, so mirroring it as a running animation while the flag is set is the
+   honest reading. True phase sync would need a timestamp on the wire. */
+.vtenc .vt-center.vt-pulse { animation: vtPulse 0.6s ease-in-out infinite; }
+@keyframes vtPulse {
+	0%, 100% { fill-opacity: 1; }
+	50% { fill-opacity: 0.35; }
 }
 
-kbd {
-	font: 11px/1 ui-monospace, monospace; background: #0f1117; color: var(--txt);
-	border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px;
-	padding: 1px 4px; margin: 0 1px;
+/* A sticky shift changes what every turn means — make that hard to miss. */
+.vtwister-grid.shifted { outline: 1px solid var(--warn); outline-offset: 7px; border-radius: 12px; }
+
+/* --- Fake mode: the grid *is* the instrument, so it leads ---------------- */
+/* With hardware attached the grid is a mirror and stays a secondary panel;
+   with --fake it is the only way to play the thing. */
+body.fake-mode #vtPanel { order: -1; }
+body.fake-mode #vtPanel .vtwister-grid { width: min(100%, 560px); gap: 12px; }
+body.fake-mode #vtPanel .vtenc { border-radius: 12px; }
+body.fake-mode #vtPanel .vtside-btn { min-width: 86px; padding: 12px 8px; }
+body.fake-mode #vtPanel .vt-readout { font-size: 13px; }
+
+@media (prefers-reduced-motion: reduce) {
+	.vtenc, .vtenc .vt-center, .vtenc .vt-readout, #pulseLed { transition: none; }
+	.vtenc .vt-center.vt-pulse { animation: none; opacity: .7; }
+}
+
+
+/* --- Narrow widths ------------------------------------------------------- */
+@media (max-width: 560px) {
+	/* Flanking side buttons stop fitting beside a 4-wide grid; move them to
+	   rows above and below, which also keeps the knobs as large as possible. */
+	.vtwister-row { flex-wrap: wrap; gap: 10px; }
+	.vtwister-side { flex-direction: row; width: 100%; justify-content: center; }
+	.vtwister-grid, body.fake-mode #vtPanel .vtwister-grid { width: 100%; order: 1; }
+	.vtwister-side:first-child { order: 0; }
+	.vtwister-side:last-child { order: 2; }
+	.vtside-btn, body.fake-mode #vtPanel .vtside-btn { flex: 1 1 0; min-width: 0; }
+	main { padding: 12px; }
+	.values { max-width: none; }
 }
