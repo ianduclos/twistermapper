@@ -3,10 +3,10 @@ project: twistermapper
 state: active
 updated: 2026-09-12
 machine: mac
-summary: The web UI's Phase 5 design pass landed and the daemon gained a Max boot handshake — ping/pong, preset load, and value sets that no longer echo back — but the launchd agent still runs a pre-handshake build and a Morph page flashing report is undiagnosed.
+summary: The Max side of the boot handshake is built and working in _hotelier-main, and the daemon's /dump gap it exposed is fixed — but dist/ is built and not yet restarted, so the live daemon is still the old wire behavior, and a Morph page flashing report is undiagnosed.
 next:
-  - Rebuild and restart the launchd agent — dist/ predates today's echo suppression, so the running daemon still echoes
-  - Live-verify the echo suppression, then build the Max side against docs/max-handshake.md
+  - Restart the launchd agent — dist/ is current as of 13:15 but the running process is the 01:57 build, so the daemon still echoes and still cannot dump slots a/b
+  - Re-verify the patch against the restarted daemon — the handshake was proved against the old build, so the echo it saw will disappear
   - Diagnose the Morph page flashing Ian reported (see HANDOFF.md)
   - Build Phase 6 — declared page settings, planned in docs/roadmap.md
   - Confirm or close the July hotplug LED-flash bug (see HANDOFF.md)
