@@ -1,0 +1,94 @@
+/* Twister Manager — web UI styles.
+ * Served straight from web/ by controlServer.ts; no build step.
+ */
+
+:root {
+	--bg: #0e0f13; --panel: #171a21; --line: #262b36; --txt: #e6e9ef;
+	--mut: #8a93a6; --acc: #6ea8fe; --ok: #51cf66; --warn: #ffd43b; --bad: #ff6b6b;
+}
+* { box-sizing: border-box; }
+body {
+	margin: 0; background: var(--bg); color: var(--txt);
+	font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+header {
+	display: flex; align-items: center; gap: 12px;
+	padding: 12px 18px; border-bottom: 1px solid var(--line);
+}
+header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+#status { margin-left: auto; font-size: 12px; color: var(--mut); display: flex; align-items: center; gap: 6px; }
+#dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); }
+#dot.on { background: var(--ok); }
+main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 18px; max-width: 1000px; }
+@media (max-width: 720px) { main { grid-template-columns: 1fr; } }
+.tabs { display: flex; gap: 2px; padding: 0 18px; border-bottom: 1px solid var(--line); }
+.tabs button { background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0; color: var(--mut); padding: 10px 14px; cursor: pointer; font: inherit; }
+.tabs button:hover { color: var(--txt); }
+.tabs button.active { color: var(--txt); border-bottom-color: var(--acc); }
+main.tab { display: none; }
+main.tab.active { display: grid; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+.panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--mut); margin: 0 0 14px; }
+.row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+label { color: var(--mut); font-size: 12px; min-width: 64px; }
+input[type=number], select {
+	background: #0f1117; color: var(--txt); border: 1px solid var(--line);
+	border-radius: 6px; padding: 6px 8px; font: inherit; width: 84px;
+}
+input[type=range] { flex: 1; accent-color: var(--acc); }
+button {
+	background: #232936; color: var(--txt); border: 1px solid var(--line);
+	border-radius: 6px; padding: 8px 12px; font: inherit; cursor: pointer;
+}
+button:hover { border-color: var(--acc); }
+button.primary { background: var(--acc); color: #08111f; border-color: var(--acc); font-weight: 600; }
+button.playing { background: var(--bad); border-color: var(--bad); color: #1a0808; }
+.focusgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.slot {
+	text-align: center; padding: 10px 6px; border-radius: 8px; cursor: pointer;
+	background: #0f1117; border: 1px solid var(--line);
+}
+.slot:hover { border-color: var(--acc); }
+.slot.focused { border-color: var(--acc); background: #1b2740; }
+.slot .l { font-size: 17px; font-weight: 700; }
+.slot .t { font-size: 10px; color: var(--mut); text-transform: uppercase; letter-spacing: .5px; min-height: 12px; }
+#pulseLed { width: 12px; height: 12px; border-radius: 50%; background: #333; transition: background .04s; }
+#pulseLed.flash { background: var(--warn); }
+.values { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; max-width: 360px; }
+.cell { background: #0f1117; border: 1px solid var(--line); border-radius: 5px; height: 56px; position: relative; overflow: hidden; }
+.cell .bar { position: absolute; bottom: 0; left: 0; right: 0; background: var(--acc); opacity: .8; }
+.cell .n { position: absolute; top: 2px; left: 4px; font-size: 9px; color: var(--mut); }
+#log { font-family: ui-monospace, monospace; font-size: 11px; color: var(--mut); height: 150px; overflow: auto; background: #0b0d12; border: 1px solid var(--line); border-radius: 6px; padding: 8px; white-space: pre-wrap; }
+.hint { font-size: 11px; color: var(--mut); margin-top: 4px; }
+.span2 { grid-column: 1 / -1; }
+.layoutgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.lcell { display: flex; flex-direction: column; gap: 4px; }
+.llab { font-size: 11px; font-weight: 700; color: var(--mut); text-align: center; }
+.lcell select { width: 100%; }
+.prow { gap: 8px; margin-bottom: 8px; }
+.prow .pname { flex: 1; }
+.prow .pname.active { color: var(--ok); font-weight: 600; }
+.chk { display: inline-flex; align-items: center; gap: 5px; min-width: auto; cursor: pointer; }
+.chk input { accent-color: var(--acc); margin: 0; }
+input[type=text] { background: #0f1117; color: var(--txt); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; }
+
+/* Virtual Twister panel */
+.vtwister-row { display: flex; align-items: center; gap: 14px; }
+.vtwister-side { display: flex; flex-direction: column; gap: 8px; flex: 0 0 auto; }
+.vtside-btn {
+	font-size: 11px; padding: 8px 6px; min-width: 64px; text-align: center;
+	user-select: none;
+}
+.vtside-btn.active { background: var(--acc); color: #08111f; border-color: var(--acc); font-weight: 600; }
+.vtwister-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; flex: 1 1 auto; }
+.vtenc { background: #0f1117; border: 1px solid var(--line); border-radius: 8px; }
+.vtenc svg { display: block; width: 100%; height: auto; }
+.vtenc .vt-ring-bg { fill: none; stroke: var(--line); stroke-width: 10; stroke-linecap: round; }
+.vtenc .vt-ring-val { fill: none; stroke: var(--acc); stroke-width: 10; stroke-linecap: round; cursor: ns-resize; }
+.vtenc .vt-center { cursor: pointer; }
+.vtenc .vt-label { fill: var(--mut); font-size: 9px; text-anchor: middle; pointer-events: none; }
+.vtenc .vt-center.vt-pulse { animation: vtPulse 0.6s ease-in-out infinite; }
+@keyframes vtPulse {
+	0%, 100% { fill-opacity: 1; }
+	50% { fill-opacity: 0.35; }
+}

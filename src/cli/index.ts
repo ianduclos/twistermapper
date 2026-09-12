@@ -1,6 +1,7 @@
 // src/cli/index.ts
 import { readFileSync, writeFileSync } from "node:fs"
 import { resolve as resolvePath, join as joinPath } from "node:path"
+import { fileURLToPath } from "node:url"
 import { tmpdir } from "node:os"
 import midiLib from "@julusian/midi"
 import { tryAcquireLock, releaseLock } from "../util/singleInstance.js"
@@ -289,7 +290,10 @@ const SLOT_COLOR: Record<Slot, number> = {
 	7: 20, // magenta-ish
 }
 
-const UI_INDEX_PATH = resolvePath(process.cwd(), "web/index.html")
+// Static UI assets. Resolved relative to this module rather than the working
+// directory, so the daemon serves the right files whichever cwd it is launched
+// from (launchd sets its own). Correct under both tsx (src/cli/) and dist/cli/.
+const UI_STATIC_DIR = fileURLToPath(new URL("../../web", import.meta.url))
 
 // Build per-slot page factories from a SystemConfig. Shared by boot and live
 // preset apply, so the same sanitize→factory path runs everywhere.
@@ -884,7 +888,7 @@ osc.onMessage((path, args) => routeControl(path, args))
 if (uiEnabled) {
 	controlServer = createControlServer({
 		port: uiPort,
-		staticFile: UI_INDEX_PATH,
+		staticDir: UI_STATIC_DIR,
 		onMessage: routeControl,
 		onConnect: (send) => {
 			// Snapshot so a late-joining UI reflects current state immediately.
