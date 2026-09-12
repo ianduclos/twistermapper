@@ -48,6 +48,99 @@ The `--fake` grid is the instrument when no hardware is attached, but it was a p
 
 **Left open deliberately:** a real 127-entry MFT colour LUT (the hue-anchor approximation stands), true pulse *phase* sync (would need a timestamp on the wire), and per-page encoder labels.
 
+## Phase 6 — Declared page settings — PLANNED (2026-09-12)
+
+Ported from gridmapper, which solved this first (`../gridmapper/src/core/pageModule.ts`,
+`src/pages/registry.ts`, and the `SPECS`/`applySetting`/`emitSettings` trio in
+`src/pages/isometric.ts`). Scope decision: **`SettingSpec` only**. Auto-discovery
+(`registry.ts`) and settings-in-presets are explicitly out — see "Deliberately out
+of scope" below.
+
+### Why
+
+Twistermapper has no way for a page to say what it can be tuned. Three symptoms
+of the same gap:
+
+- Per-page config is a static blob in `configs/slots.json` applied at construction
+  (`Basic.encoderColors`, `StepSeq.tracks`). There is no live path to it.
+- Live edits ride bespoke routes (`/config/color/map`, `/config/colorbrightness/...`,
+  `/mode`) gated by `BASIC_ONLY_PATTERNS` in `src/cli/index.ts` — a hardcoded list
+  that makes the daemon know which pages support which addresses.
+- `web/panels.js` hardcodes a Basic-only mode dropdown (`MODE_OPTIONS`).
+
+Meanwhile every page's real tuning sits in module-level consts no one can reach:
+Morph's `PHANTOM_DECAY` and `SAVE_PULSE_MS`, StepSeq's per-track `clockIds`,
+Hotelier's and Gestures' timings, Basic's `PRECISION_DIVISOR`.
+
+### The shape
+
+1. **`src/core/pageModule.ts`** — a new file holding `SettingSpec`, copied from
+   gridmapper so the two repos stay one mental model:
+   `{ key, label?, type: "number" | "toggle" | "enum", min?, max?, step?, options?, default }`.
+
+2. **Declaration.** Twistermapper registers pages through the hand-written
+   `PAGE_FACTORIES` map in `src/core/systemConfig.ts`, not gridmapper's auto-discovered
+   modules — so each page file additionally exports `SETTINGS: SettingSpec[]`, and
+   `systemConfig.ts` becomes `name → { create, settings }`. `PAGE_NAMES` keeps working.
+   Add `pageSettings(name)` alongside it.
+
+3. **Page side**, three members, exactly gridmapper's pattern:
+   - `SPEC_BY_KEY` for validation,
+   - `applySetting(key, raw): boolean` — clamps against the spec, returns whether the
+     key was known,
+   - `settings()` returning the current values, and `emitSettings(ctx)` sending
+     `/twister/out/page/<slot>/settings <json>`.
+   Announce settings on `init` and `onFocus`, next to the existing `/type` emit.
+
+4. **Routes.** `/twister/in/page/<slot>/setting/<key> <value>` and
+   `/twister/in/page/<slot>/settings/get`. Tolerate the terse `/<key> <value>` and
+   value-in-path `/<key>/<value>` forms, as gridmapper's page protocol does.
+
+5. **Echo discipline.** A settings write that arrives over OSC must not echo its
+   `/settings` reply back to OSC — the same feedback hazard the Phase 5 tail fixed for
+   `/index/<i>/set`. Extend the existing origin-aware suppression in `emitOut`
+   (`suppressOscEcho` + `ControlOrigin`) to cover setting writes. Do not blanket-suppress
+   everything a page emits during OSC dispatch.
+
+6. **Retire `BASIC_ONLY_PATTERNS`.** Once a page validates its own keys, an unknown
+   key is simply ignored by the page and the daemon needs no per-page knowledge. The
+   existing `/config/color/*` and `/mode` routes fold into Basic's own settings.
+
+7. **Web UI.** The browser cannot import the registry the way gridmapper's sim does,
+   so the daemon sends the manifest: add `/twister/out/pagespecs <json>` (page name →
+   `SettingSpec[]`) to `controlServer`'s `onConnect` snapshot, next to `/preset/list`
+   and `/settings`. `panels.js` renders the focused slot's panel from it — number →
+   range+number, toggle → checkbox, enum → select — and the hardcoded mode dropdown
+   goes away.
+
+### Candidate settings per page
+
+| Page | Keys |
+|---|---|
+| Basic | `mode` (enum: note/precision/recall), `precisionDivisor`, palette + brightness (fold in the `/config/*` routes) |
+| Morph | `phantomDecay`, `savePulseMs`, the four scene colours |
+| StepSeq | per-track `clockIds`, `steps`, latch behaviour |
+| Gestures / Hotelier | the recording + playback timings currently const |
+| Blank | none — a page with no settings declares nothing and needs no `onOsc` |
+
+### Verification
+
+`applySetting` is pure and per-page, so unit-test it directly: out-of-range clamps,
+unknown key returns false, enum rejects a value not in `options`, and a round trip
+`settings() → applySetting → settings()`. Add a `controlServer` case for the
+`/twister/out/pagespecs` snapshot. `tsc --noEmit` clean, full suite green. Panel
+rendering is provisional until Ian looks at it.
+
+### Deliberately out of scope
+
+- **Auto-discovery** (gridmapper's `registry.ts`): top-level-await dynamic import over
+  `readdirSync` would have to work under the launchd agent's `dist/` build, and it
+  touches `systemConfig`, preset sanitize and the boot path. Worth doing later, on its own.
+- **Settings in presets**: extending `serialize()` so a preset captures and restores
+  page settings changes the preset file format. gridmapper has the same gap
+  (its `STATUS.md` next-item: "one page's serialize() to restore()") — better to let it
+  solve that first and port the answer, as with `SettingSpec` itself.
+
 ## Known issues / follow-ups
 - ~~**Single-slot page change resets all 8 pages**~~ **FIXED (2026-06-01).** `applySystemConfig` now takes `reloadSlots` (default all, for preset load); the `slot/<x>/page` route passes only the edited slot, so the other pages keep their live runtime state. Verified: setting a value on slot D survives changing slot C's page.
 - ~~Minor: double page-type broadcast~~ **FIXED (2026-06-01).** Dropped `broadcastPageTypes()`; reloaded pages already re-emit `/type` on `init()`.
