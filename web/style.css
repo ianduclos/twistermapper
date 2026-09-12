@@ -92,3 +92,35 @@ input[type=text] { background: #0f1117; color: var(--txt); border: 1px solid var
 	0%, 100% { fill-opacity: 1; }
 	50% { fill-opacity: 0.35; }
 }
+
+/* --- Virtual Twister: interaction states -------------------------------- */
+/* The whole cell is the hit target; the zone under the pointer decides whether
+   it acts as a knob or a button, so the cursor has to follow the pointer rather
+   than sit on one child element. */
+.vtenc { cursor: ns-resize; transition: border-color .08s, background .08s; }
+.vtenc.over-center { cursor: pointer; }
+.vtenc:hover { border-color: var(--mut); }
+.vtenc:focus-visible { outline: none; border-color: var(--acc); box-shadow: 0 0 0 2px rgba(110, 168, 254, .25); }
+.vtenc.dragging { border-color: var(--acc); background: #12161f; }
+.vtenc.pressed .vt-center { transform: scale(.88); transform-origin: 50% 50%; }
+.vtenc .vt-center { transition: transform .06s ease-out; }
+.vtenc .vt-readout {
+	fill: var(--txt); font-size: 15px; font-weight: 600; text-anchor: middle;
+	pointer-events: none; opacity: 0; transition: opacity .12s;
+	font-variant-numeric: tabular-nums;
+}
+.vtenc:hover .vt-readout, .vtenc.dragging .vt-readout, .vtenc:focus-visible .vt-readout { opacity: .92; }
+
+/* A sticky shift changes what every turn means — make that hard to miss. */
+.vtwister-grid.shifted { outline: 1px solid var(--warn); outline-offset: 6px; border-radius: 10px; }
+
+@media (prefers-reduced-motion: reduce) {
+	.vtenc, .vtenc .vt-center, .vtenc .vt-readout { transition: none; }
+	.vtenc .vt-center.vt-pulse { animation: none; }
+}
+
+kbd {
+	font: 11px/1 ui-monospace, monospace; background: #0f1117; color: var(--txt);
+	border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px;
+	padding: 1px 4px; margin: 0 1px;
+}
