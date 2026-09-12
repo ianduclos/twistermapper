@@ -106,8 +106,15 @@ let controlServer: ControlServer | null = null
 
 // All outbound twister messages go through here: out to OSC/UDP, and mirrored
 // to any connected web UI so it can monitor live.
+// While an OSC-originated value set is being dispatched, the page's own /value
+// echo is kept off the OSC wire: the sender already knows the value it just
+// sent, and a patch that both sends and listens would feed back on itself. The
+// web UI still receives it — its value monitor has no other source, and it is
+// not the thing that sent the set.
+let suppressOscEcho = false
+
 function emitOut(path: string, ...args: Array<number | string | boolean>) {
-	osc.send(path, ...args)
+	if (!suppressOscEcho) osc.send(path, ...args)
 	controlServer?.broadcast(path, args)
 }
 
@@ -336,6 +343,12 @@ const BASIC_ONLY_PATTERNS = [
 	/^\/config\/colorbrightness\/enc\/\d{1,2}\/set$/,
 	/^\/dump$/,
 ] as const
+
+/** A page-relative value set: /index/<id>/set <0..1>. */
+const VALUE_SET_PATTERN = /^\/index\/\d{1,2}\/set$/
+
+/** Where a control message came from. Only OSC gets its value echo suppressed. */
+type ControlOrigin = "osc" | "ui"
 
 const matchesBasicOnlyPath = (path: string): boolean =>
 	BASIC_ONLY_PATTERNS.some((regex) => regex.test(path))
@@ -736,7 +749,7 @@ function setSettingsKey(key: string, rawValue: unknown) {
 
 // Shared control router: both OSC input and the web UI dispatch through this,
 // so they speak one vocabulary (the /twister/in/... paths).
-function routeControl(path: string, args: any[]) {
+function routeControl(path: string, args: any[], origin: ControlOrigin = "osc") {
 	// /twister/in/focus/page <a..h>
 	if (path === "/twister/in/focus/page") {
 		const slot = parseSlotLabel(args[0])
@@ -888,21 +901,33 @@ function routeControl(path: string, args: any[]) {
 		const slot = slotFromLabel(m[1])
 		if (slot !== undefined) {
 			const sub = `/${m[2]}` // pass the remainder to the page
-			if (allowBasicOnlyRoute(slot, sub)) pm.routeOscToPage(slot, sub, args)
+			if (allowBasicOnlyRoute(slot, sub)) {
+				// A value set that arrived over OSC must not echo back to OSC.
+				if (origin === "osc" && VALUE_SET_PATTERN.test(sub)) {
+					suppressOscEcho = true
+					try {
+						pm.routeOscToPage(slot, sub, args)
+					} finally {
+						suppressOscEcho = false
+					}
+				} else {
+					pm.routeOscToPage(slot, sub, args)
+				}
+			}
 		}
 		return
 	}
 }
 
 // OSC input → shared router
-osc.onMessage((path, args) => routeControl(path, args))
+osc.onMessage((path, args) => routeControl(path, args, "osc"))
 
 // Optional web UI: same router for inbound, mirrored OSC-out for monitoring.
 if (uiEnabled) {
 	controlServer = createControlServer({
 		port: uiPort,
 		staticDir: UI_STATIC_DIR,
-		onMessage: routeControl,
+		onMessage: (path, args) => routeControl(path, args, "ui"),
 		onConnect: (send) => {
 			// Snapshot so a late-joining UI reflects current state immediately.
 			// Fake mode makes the browser grid the only way to play the thing, so

@@ -84,6 +84,7 @@ In (presets & global settings):
 
 In (page):
 • /twister/in/page/<slot>/index/<id>/set <normalized> → set internal value (page decides if it’s allowed; e.g., GesturePage only in standby).
+  – Echo suppression: when this arrives over OSC, the page's resulting /index/<id>/value is NOT sent back on the OSC wire — the sender already knows the value, and a patch that both sends and listens would feed back on itself. The web UI still receives it (it is not the sender). A set that arrives from the web UI is unaffected and still emits to OSC. Only /index/<id>/set is treated this way; every other in-route emits normally. See docs/max-handshake.md.
 • /twister/in/page/<slot>/config/color/map <16 ints> → replace BasicPage encoder palette (ignored if the slot isn’t BasicPage).
 • /twister/in/page/<slot>/config/color/enc/<id>/set <color> → update a single BasicPage encoder color.
 • /twister/in/page/<slot>/config/colorbrightness/map <16 ints> → replace BasicPage encoder brightness map.

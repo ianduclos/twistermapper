@@ -145,12 +145,12 @@ export function initTwister({ send }) {
 				class: "vt-ring-val", d: VT_ARC_D, pathLength: "1",
 				"stroke-dasharray": "0 2", "stroke-dashoffset": "0",
 			})
-			// Three concentric pieces approximate a lit cap without an SVG filter,
+			// Two concentric pieces approximate a lit cap without an SVG filter,
 			// which sixteen cells at 60fps cannot afford: a soft bloom behind the
-			// die, the die itself, and a fixed specular that never needs writing.
+			// die, and the die itself. Both are driven by ledBrightness; there is
+			// no fixed specular, because a static highlight encodes nothing.
 			const bloom = svgEl("circle", { class: "vt-bloom", cx: 50, cy: 50, r: 29 })
 			const cap = svgEl("circle", { class: "vt-cap", cx: 50, cy: 50, r: 19 })
-			const gloss = svgEl("ellipse", { class: "vt-gloss", cx: 50, cy: 43, rx: 11, ry: 6.5 })
 			const index = svgEl("text", { class: "vt-index", x: 7, y: 14 })
 			index.textContent = String(id)
 			// The ring leaves a 90 degree gap at the bottom by construction. That
@@ -158,7 +158,7 @@ export function initTwister({ send }) {
 			const readout = svgEl("text", { class: "vt-readout", x: 50, y: 89 })
 			readout.textContent = ""
 
-			svg.append(bg, val, bloom, cap, gloss, index, readout)
+			svg.append(bg, val, bloom, cap, index, readout)
 			root.appendChild(svg)
 			// Nothing inside the cell should intercept the pointer: the cell itself
 			// is the hit target, and the zone is decided from the coordinates.

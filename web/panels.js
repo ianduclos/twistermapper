@@ -186,6 +186,16 @@ export function initPanels({ send }) {
 			const load = document.createElement("button")
 			load.textContent = "Load"
 			load.onclick = () => send("/twister/in/preset/load", name)
+			// Overwrite is a save under an existing name: it captures the live
+			// layout into that file and leaves it active. Confirmed, because it
+			// destroys whatever was stored there.
+			const over = document.createElement("button")
+			over.textContent = "Overwrite"
+			over.title = `Replace "${name}" with the current layout`
+			over.onclick = () => {
+				if (confirm(`Overwrite preset "${name}" with the current layout?`))
+					send("/twister/in/preset/save", name)
+			}
 			const del = document.createElement("button")
 			del.textContent = "Delete"
 			del.onclick = () => {
@@ -193,6 +203,7 @@ export function initPanels({ send }) {
 			}
 			row.appendChild(nm)
 			row.appendChild(load)
+			row.appendChild(over)
 			row.appendChild(del)
 			presetList.appendChild(row)
 		})
