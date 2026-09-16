@@ -13,6 +13,7 @@ Headless Node.js app that decouples input deltas from LED feedback, with 8 loada
 Environment & build
 • Node + TypeScript (NodeNext ESM).
 • macOS target; default MIDI port name: “Midi Fighter Twister”.
+• MIDI selection honors the requested name (case-insensitive exact match, then substring) or index. An unavailable port fails startup/reconnection with an error listing available ports; it never falls back to an unrelated device. This prevents LED feedback looping through a virtual MIDI bus as encoder input. Use `--fake` without hardware. Failed driver initialization closes any partially opened ports.
 • Strict types for core/page/render layers; JSON config for device map & colors.
 • Null stubs exist (e.g., NullMidi) for running without hardware.
 

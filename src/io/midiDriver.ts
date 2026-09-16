@@ -7,7 +7,7 @@ Acceptance Criteria:
 1) Provide class NodeMidiDriver that implements MidiOut & MidiIn:
    - constructor(opts?: { inPort?: number|string; outPort?: number|string; deviceMapPath?: string })
      * Ports: if number => open that index; if string => first port containing substring (case-insensitive).
-     * If unspecified, pick the first port whose name includes 'twister' for both in/out; fallback to index 0.
+     * If unspecified, select Midi Fighter Twister. Never fall back to an unrelated port.
    - onMessage(cb): wire MIDI IN and translate to RawMsg shape {type:'cc'|'note', channel(0..15), number, value}
    - setRing(enc, val0_127): CC on output.ringLevel.channel, cc=enc, value=val
    - setRGB(enc, color1_126): NOTE on output.rgbColor.channel, note=enc, velocity=color
@@ -68,10 +68,15 @@ export class NodeMidiDriver implements MidiOut, MidiIn {
     // Optional: drop timing/active sensing noise
     // this.input.ignoreTypes(true, true, true);
 
-    const inInfo  = this.openPort(this.input,  opts.inPort  ?? DEFAULT_DEVICE_NAME, 'input');
-    const outInfo = this.openPort(this.output, opts.outPort ?? DEFAULT_DEVICE_NAME, 'output');
-    this.inPortName  = inInfo.name;
-    this.outPortName = outInfo.name;
+    try {
+      const inInfo  = this.openPort(this.input,  opts.inPort  ?? DEFAULT_DEVICE_NAME, 'input');
+      const outInfo = this.openPort(this.output, opts.outPort ?? DEFAULT_DEVICE_NAME, 'output');
+      this.inPortName  = inInfo.name;
+      this.outPortName = outInfo.name;
+    } catch (err) {
+      this.close();
+      throw err;
+    }
 
     this.input.on('message', (_delta, message) => {
       const parsed = this.parseMessage(message);
@@ -156,14 +161,9 @@ export class NodeMidiDriver implements MidiOut, MidiIn {
     idx = lower.findIndex(n => n.includes(target));
     if (idx !== -1) return { index: idx, name: names[idx] };
 
-    // fallback: prefer exact DEFAULT_DEVICE_NAME, then substring, else first
-    const want = DEFAULT_DEVICE_NAME.toLowerCase();
-    idx = lower.findIndex(n => n === want);
-    if (idx !== -1) return { index: idx, name: names[idx] };
-    idx = lower.findIndex(n => n.includes(want));
-    if (idx !== -1) return { index: idx, name: names[idx] };
-
-    return { index: 0, name: names[0] };
+    // An unrelated virtual bus can echo LED output back as encoder input.
+    // Fail closed instead of silently substituting another device.
+    throw new Error(`No ${kind} MIDI port matching '${spec}'. Available: ${names.join(', ')}. Use --fake for virtual Twister mode.`);
   }
 
   private parseMessage(message: number[]): RawMsg | null {

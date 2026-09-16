@@ -77,6 +77,30 @@ and factual.
 ---
 
 ## Session log (newest first)
+### 2026-09-16 — Codex
+Diagnosed active slot A (Hotelier) flashing: live LED mirror cycled record →
+playback → standby at ~30fps; passive monitoring of Midi Bus Bus 1 captured
+600 LED messages in two seconds. No Twister input was enumerated, and the
+running daemon's last startup selected that bus for both input and output.
+RGB notes therefore returned as encoder presses. No new hotplug log entries
+occurred during the report; this is a confirmed loopback cause, distinct from
+the older suspected polling issue.
+- **Changed:** `src/io/midiDriver.ts` now rejects unmatched port names instead
+  of falling back to another device; closes partially opened ports on failure.
+  Device mappings unchanged. Added six driver tests; updated Architecture.md.
+- **Verified:** three regressions failed before the fix; 69/69 tests pass,
+  `npx tsc --noEmit` and build pass. Compiled driver rejected the real absent
+  Twister and listed available ports. Visual outcome awaits Ian's check.
+- **Deployment:** rebuilt `dist/`; existing daemon remains on its old loaded
+  code. No agent stop/restart performed. Runtime change needs Ian's explicit
+  approval under this file's working agreement; `--fake` is appropriate for
+  browser-only use. Restarting clears transient recordings/values.
+- **Next:** stop the looping daemon and run virtual mode, or reconnect the
+  hardware and restart. Hardware mode now fails startup while it is absent
+  (launchd KeepAlive retries). Investigate hotplug polling separately if needed.
+- **Gotcha:** imported `~/.Codex/HOST.md` remains absent; no cross-project feed
+  location available. STATUS.md untouched per project instructions.
+
 ### 2026-09-12 — Claude
 Two sessions in one day. The first (separate, hit the usage limit mid-question)
 landed Phase 5: six commits reworking the virtual Twister and giving the web UI
