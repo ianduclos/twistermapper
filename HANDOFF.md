@@ -66,9 +66,11 @@ and factual.
   `-- --fake` for the virtual Twister (no hardware). `npm test` ·
   `npx tsc --noEmit` · `npm run build`. Diagnostics: `probe`, `raw:probe`,
   `log`, `osc:send`.
-- **Deployed:** launchd agent `com.ianduclos.twistermapper` runs `dist/`
-  always-on (`./scripts/agent.sh {stop|start|status|logs}`) — it holds the
-  MIDI/OSC ports and the single-instance lock, so stop it before any dev run.
+- **Runtime (2026-09-16):** launchd agent `com.ianduclos.twistermapper` is
+  stopped; `npm run dev -- --fake` is serving the virtual Twister on 57190
+  at Ian's request. To return to hardware, stop that dev process and run
+  `./scripts/agent.sh start` with the Twister connected. The rebuilt `dist/`
+  rejects missing MIDI devices instead of selecting an unrelated bus.
 - **Live state and next steps live in `STATUS.md`** (Phases 1–4 done: render
   loop, StepSeq, global presets, virtual Twister; 32/32 tests green). Known
   in-progress: StepSeq "latch in shift" interaction — discuss before
@@ -91,13 +93,16 @@ the older suspected polling issue.
 - **Verified:** three regressions failed before the fix; 69/69 tests pass,
   `npx tsc --noEmit` and build pass. Compiled driver rejected the real absent
   Twister and listed available ports. Visual outcome awaits Ian's check.
-- **Deployment:** rebuilt `dist/`; existing daemon remains on its old loaded
-  code. No agent stop/restart performed. Runtime change needs Ian's explicit
-  approval under this file's working agreement; `--fake` is appropriate for
-  browser-only use. Restarting clears transient recordings/values.
-- **Next:** stop the looping daemon and run virtual mode, or reconnect the
-  hardware and restart. Hardware mode now fails startup while it is absent
-  (launchd KeepAlive retries). Investigate hotplug polling separately if needed.
+- **Deployment:** rebuilt `dist/`. Ian then requested Twister or virtual input,
+  never fallback; stopped the looping launchd agent and started
+  `npm run dev -- --fake`. Live socket reports fake mode and one unchanged
+  LED snapshot across five seconds, replacing the ~30fps mode oscillation.
+  No global launchd configuration was changed; virtual mode is this session's
+  dev process. Transient recordings/values were reset by the switch.
+- **Next:** Ian checks the browser. For hardware, stop the virtual dev process,
+  reconnect Twister, and start the agent. Hardware mode fails startup while
+  absent (launchd KeepAlive retries). Investigate hotplug polling separately
+  if needed.
 - **Gotcha:** imported `~/.Codex/HOST.md` remains absent; no cross-project feed
   location available. STATUS.md untouched per project instructions.
 
